@@ -5,6 +5,7 @@ from app.models.task import Task
 from app.models.calendar_event import CalendarEvent
 from app.models.attachment import Attachment
 from app.models.ai_log import AILog
+from app.models.sub_event import SubEvent
 
 __all__ = [
     "Event",
@@ -14,4 +15,5 @@ __all__ = [
     "CalendarEvent",
     "Attachment",
     "AILog",
+    "SubEvent",
 ]

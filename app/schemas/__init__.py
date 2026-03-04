@@ -1,8 +1,15 @@
-from app.schemas.event import EventCreate, EventUpdate, EventResponse
+from app.schemas.event import EventCreate, EventUpdate, EventResponse, SubEventCreateInline
 from app.schemas.vendor import VendorCreate, VendorUpdate, VendorResponse
 from app.schemas.payment import PaymentCreate, PaymentUpdate, PaymentResponse
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse, TaskStatus, TaskPriority
 from app.schemas.calendar_event import CalendarEventCreate, CalendarEventUpdate, CalendarEventResponse
+from app.schemas.sub_event import (
+    SubEventCreate,
+    SubEventUpdate,
+    SubEventResponse,
+    SubEventBulkCreate,
+    SubEventReorder,
+)
 from app.schemas.capture import (
     CaptureRequest,
     CaptureResponse,
@@ -12,6 +19,8 @@ from app.schemas.capture import (
     TaskData,
     CalendarEventData,
     VendorData,
+    SubEventUpdateData,
+    EventUpdateData,
     IntentType,
 )
 from app.schemas.dashboard import (
@@ -28,6 +37,7 @@ __all__ = [
     "EventCreate",
     "EventUpdate",
     "EventResponse",
+    "SubEventCreateInline",
     "VendorCreate",
     "VendorUpdate",
     "VendorResponse",
@@ -42,6 +52,11 @@ __all__ = [
     "CalendarEventCreate",
     "CalendarEventUpdate",
     "CalendarEventResponse",
+    "SubEventCreate",
+    "SubEventUpdate",
+    "SubEventResponse",
+    "SubEventBulkCreate",
+    "SubEventReorder",
     "CaptureRequest",
     "CaptureResponse",
     "ConfirmRequest",
@@ -50,6 +65,8 @@ __all__ = [
     "TaskData",
     "CalendarEventData",
     "VendorData",
+    "SubEventUpdateData",
+    "EventUpdateData",
     "IntentType",
     "DashboardResponse",
     "UpcomingPayment",
