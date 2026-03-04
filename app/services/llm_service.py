@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class ExtractionResult(BaseModel):
     """Validated extraction result from LLM."""
     
-    intent: Literal["payment", "task", "calendar_event", "vendor", "unknown"]
+    intent: Literal["payment", "task", "calendar_event", "vendor", "sub_event_update", "event_update", "unknown"]
     confidence: float = Field(ge=0.0, le=1.0)
     data: dict = Field(default_factory=dict)
     missing_fields: list[str] = Field(default_factory=list)
@@ -51,7 +51,7 @@ If intent is unclear, return "intent": "unknown".
 Return ONLY valid JSON following this schema:
 
 {{
-  "intent": "payment | task | calendar_event | vendor | unknown",
+  "intent": "payment | task | calendar_event | vendor | sub_event_update | event_update | unknown",
   "confidence": number between 0.0 and 1.0,
   "data": {{}},
   "missing_fields": [],
@@ -63,6 +63,8 @@ Intent definitions:
 - task: Action items, to-dos, things to complete
 - calendar_event: Meetings, appointments, tastings, fittings, scheduled activities
 - vendor: Adding or updating vendor/supplier information
+- sub_event_update: Adding, updating, cancelling, or rescheduling sub-events (e.g., "cancel the reception", "add a sangeet", "move mehndi to 6pm")
+- event_update: Updating main event details (date range, location, name)
 - unknown: Cannot determine intent confidently
 
 For PAYMENT intent, extract into data:
@@ -92,6 +94,30 @@ For VENDOR intent, extract into data:
 - category: string or null
 - contact_info: string or null
 - notes: string or null
+
+For SUB_EVENT_UPDATE intent, extract into data:
+- action: "add" | "update" | "cancel" | "reschedule" (required)
+- sub_event_name: string (the target sub-event name, e.g., "reception", "mehndi", "haldi")
+- new_name: string or null (if renaming, e.g., changing "reception" to "sangeet")
+- new_date: "YYYY-MM-DD" or null (if rescheduling or adding)
+- new_start_time: "HH:MM" or null (if changing/setting time)
+- new_end_time: "HH:MM" or null
+- new_location: string or null (if changing venue)
+- description: string or null
+
+Examples:
+- "Cancel the reception" -> action: "cancel", sub_event_name: "reception"
+- "Add a sangeet at 6pm the day before the wedding" -> action: "add", new_name: "sangeet", new_start_time: "18:00"
+- "Move mehndi to Saturday at 4pm" -> action: "reschedule", sub_event_name: "mehndi", new_start_time: "16:00"
+- "Change reception to sangeet" -> action: "update", sub_event_name: "reception", new_name: "sangeet"
+
+For EVENT_UPDATE intent, extract into data:
+- name: string or null (new event name)
+- start_date: "YYYY-MM-DD" or null
+- end_date: "YYYY-MM-DD" or null
+- location: string or null
+- location_city: string or null
+- description: string or null
 
 Confidence guidelines:
 - > 0.90: All required fields present, intent is clear
