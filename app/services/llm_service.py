@@ -17,10 +17,12 @@ class ExtractionResult(BaseModel):
     """Validated extraction result from LLM."""
     
     intent: Literal["payment", "task", "calendar_event", "vendor", "unknown"]
+    action: Literal["create", "update"] = "create"
     confidence: float = Field(ge=0.0, le=1.0)
     data: dict = Field(default_factory=dict)
     missing_fields: list[str] = Field(default_factory=list)
     needs_confirmation: bool = True
+    reference_id: Optional[str] = None
 
 
 class LLMService:
@@ -34,15 +36,22 @@ Your task is to analyze user input and extract structured event planning data.
 
 Today's date is: {today}
 
+{context}
+
 Follow these steps internally:
 
-1. Determine the user's intent
-2. Extract relevant fields
-3. Identify missing required fields
-4. Estimate confidence
-5. Return structured JSON
+1. Check if context contains relevant existing records
+2. Determine the user's intent
+3. Determine if this is a NEW record (action="create") or UPDATE to existing (action="update")
+4. Extract relevant fields
+5. If updating, include reference_id of the record to update
+6. Identify missing required fields
+7. Estimate confidence
+8. Return structured JSON
 
 Never invent values for missing fields.
+
+If user says "the rest", "remaining", "balance" - look at context for the outstanding amount.
 
 If information is missing, list it in the "missing_fields" array.
 
@@ -52,10 +61,12 @@ Return ONLY valid JSON following this schema:
 
 {{
   "intent": "payment | task | calendar_event | vendor | unknown",
+  "action": "create | update",
   "confidence": number between 0.0 and 1.0,
   "data": {{}},
   "missing_fields": [],
-  "needs_confirmation": true | false
+  "needs_confirmation": true | false,
+  "reference_id": "id of existing record to update, or null for new"
 }}
 
 Intent definitions:
@@ -67,9 +78,9 @@ Intent definitions:
 
 For PAYMENT intent, extract into data:
 - vendor_name: string or null
-- amount_paid: number or null
-- remaining_balance: number or null
-- payment_date: "YYYY-MM-DD" or null (when payment was made)
+- amount_paid: number or null (if user says "the rest" or "remaining", use outstanding amount from context)
+- remaining_balance: number or null (set to 0 if paying full balance)
+- payment_date: "YYYY-MM-DD" or null (when payment was made, default to today if just "paid")
 - due_date: "YYYY-MM-DD" or null (when remaining is due)
 - method: string or null
 - notes: string or null
@@ -92,6 +103,11 @@ For VENDOR intent, extract into data:
 - category: string or null
 - contact_info: string or null
 - notes: string or null
+
+Action guidelines:
+- action="create": New payment, task, event, or vendor
+- action="update": Follow-up payment on existing record, or modifying existing record
+  - If updating, set reference_id to the existing record's ID from context
 
 Confidence guidelines:
 - > 0.90: All required fields present, intent is clear
@@ -171,10 +187,12 @@ Be concise and actionable. Limit to top 5-7 priority items and 3-5 recommendatio
         """Return a safe unknown result instead of hallucinating."""
         result = {
             "intent": "unknown",
+            "action": "create",
             "confidence": 0.0,
             "data": {},
             "missing_fields": [],
             "needs_confirmation": True,
+            "reference_id": None,
         }
         if error:
             result["error"] = error
@@ -205,19 +223,30 @@ Be concise and actionable. Limit to top 5-7 priority items and 3-5 recommendatio
         data = response.json()
         return data["choices"][0]["message"]["content"]
     
-    async def extract_intent_and_data(self, user_input: str) -> dict:
+    async def extract_intent_and_data(
+        self,
+        user_input: str,
+        context: Optional[str] = None,
+    ) -> dict:
         """
         Extract intent and structured data from natural language input.
         
+        Args:
+            user_input: The natural language text from user
+            context: Optional context string with existing records info
+        
         Returns a validated dict with:
         - intent: payment | task | calendar_event | vendor | unknown
+        - action: create | update
         - confidence: 0.0 to 1.0
         - data: intent-specific fields
         - missing_fields: list of required but missing fields
         - needs_confirmation: whether user must confirm
+        - reference_id: ID of existing record to update (if action=update)
         """
         today = date.today().isoformat()
-        system_prompt = self.EXTRACTION_PROMPT.format(today=today)
+        context_str = context or "No existing records for context."
+        system_prompt = self.EXTRACTION_PROMPT.format(today=today, context=context_str)
         
         messages = [
             {"role": "system", "content": system_prompt},
