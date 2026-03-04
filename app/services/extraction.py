@@ -10,6 +10,8 @@ from app.models.vendor import Vendor
 from app.models.payment import Payment
 from app.models.task import Task
 from app.models.calendar_event import CalendarEvent
+from app.models.event import Event
+from app.models.sub_event import SubEvent
 from app.services.llm_service import LLMService, get_llm_service
 from app.schemas.capture import (
     IntentType,
@@ -17,6 +19,8 @@ from app.schemas.capture import (
     TaskData,
     CalendarEventData,
     VendorData,
+    SubEventUpdateData,
+    EventUpdateData,
 )
 
 
@@ -78,12 +82,20 @@ class ExtractionService:
             
             if intent == IntentType.PAYMENT:
                 created_id = await self._create_payment(event_id, data, db)
+                message = "Successfully created payment"
             elif intent == IntentType.TASK:
                 created_id = await self._create_task(event_id, data, db)
+                message = "Successfully created task"
             elif intent == IntentType.CALENDAR_EVENT:
                 created_id = await self._create_calendar_event(event_id, data, db)
+                message = "Successfully created calendar event"
             elif intent == IntentType.VENDOR:
                 created_id = await self._create_vendor(event_id, data, db)
+                message = "Successfully created vendor"
+            elif intent == IntentType.SUB_EVENT_UPDATE:
+                created_id, message = await self._handle_sub_event_update(event_id, data, db)
+            elif intent == IntentType.EVENT_UPDATE:
+                created_id, message = await self._update_event(event_id, data, db)
             else:
                 ai_log.status = AILogStatus.ERROR
                 await db.commit()
@@ -92,7 +104,7 @@ class ExtractionService:
             ai_log.status = AILogStatus.SUCCESS
             await db.commit()
             
-            return True, f"Successfully created {intent.value}", created_id
+            return True, message, created_id
             
         except Exception as e:
             ai_log.status = AILogStatus.ERROR
@@ -162,6 +174,23 @@ class ExtractionService:
         db.add(payment)
         await db.commit()
         await db.refresh(payment)
+        
+        # Auto-create a task for upcoming payment if there's a due date with remaining balance
+        remaining_balance = data.get("remaining_balance")
+        if due_date and remaining_balance:
+            try:
+                remaining_amount = float(remaining_balance) if remaining_balance else 0
+                if remaining_amount > 0:
+                    await self._create_payment_reminder_task(
+                        event_id=event_id,
+                        vendor_name=vendor_name or "Vendor",
+                        amount=remaining_amount,
+                        due_date=due_date,
+                        db=db,
+                    )
+            except (ValueError, TypeError):
+                pass
+        
         return payment.id
     
     async def _create_task(
@@ -194,6 +223,30 @@ class ExtractionService:
             due_date=due_date,
             status=TaskStatus.PENDING,
             priority=priority,
+        )
+        db.add(task)
+        await db.commit()
+        await db.refresh(task)
+        return task.id
+    
+    async def _create_payment_reminder_task(
+        self,
+        event_id: str,
+        vendor_name: str,
+        amount: float,
+        due_date: date,
+        db: AsyncSession,
+    ) -> str:
+        """Auto-create a task to remind about an upcoming payment."""
+        from app.models.task import TaskStatus, TaskPriority
+        
+        task = Task(
+            event_id=event_id,
+            title=f"Payment due: ${amount:,.0f} to {vendor_name}",
+            description=f"Reminder: ${amount:,.2f} payment due to {vendor_name}",
+            due_date=due_date,
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.HIGH,
         )
         db.add(task)
         await db.commit()
@@ -253,6 +306,152 @@ class ExtractionService:
         await db.commit()
         await db.refresh(vendor)
         return vendor.id
+    
+    async def _handle_sub_event_update(
+        self,
+        event_id: str,
+        data: dict,
+        db: AsyncSession,
+    ) -> tuple[Optional[str], str]:
+        """Handle sub-event add/update/cancel/reschedule actions."""
+        from datetime import time as dt_time
+        
+        action = data.get("action", "").lower()
+        sub_event_name = data.get("sub_event_name", "")
+        
+        if action == "add":
+            new_date = data.get("new_date")
+            if isinstance(new_date, str):
+                new_date = date.fromisoformat(new_date)
+            
+            start_time = None
+            if data.get("new_start_time"):
+                time_str = data["new_start_time"]
+                if isinstance(time_str, str):
+                    parts = time_str.split(":")
+                    start_time = dt_time(int(parts[0]), int(parts[1]))
+                else:
+                    start_time = time_str
+            
+            end_time = None
+            if data.get("new_end_time"):
+                time_str = data["new_end_time"]
+                if isinstance(time_str, str):
+                    parts = time_str.split(":")
+                    end_time = dt_time(int(parts[0]), int(parts[1]))
+                else:
+                    end_time = time_str
+            
+            sub_event = SubEvent(
+                event_id=event_id,
+                name=data.get("new_name") or sub_event_name or "New Sub-Event",
+                date=new_date or date.today(),
+                start_time=start_time,
+                end_time=end_time,
+                location=data.get("new_location"),
+                description=data.get("description"),
+            )
+            db.add(sub_event)
+            await db.commit()
+            await db.refresh(sub_event)
+            return sub_event.id, f"Successfully added sub-event: {sub_event.name}"
+        
+        result = await db.execute(
+            select(SubEvent).where(
+                SubEvent.event_id == event_id,
+                SubEvent.name.ilike(f"%{sub_event_name}%"),
+            )
+        )
+        sub_event = result.scalar_one_or_none()
+        
+        if not sub_event:
+            return None, f"Sub-event '{sub_event_name}' not found"
+        
+        if action == "cancel":
+            name = sub_event.name
+            await db.delete(sub_event)
+            await db.commit()
+            return None, f"Successfully cancelled sub-event: {name}"
+        
+        elif action == "update":
+            if data.get("new_name"):
+                sub_event.name = data["new_name"]
+            if data.get("new_location"):
+                sub_event.location = data["new_location"]
+            if data.get("description"):
+                sub_event.description = data["description"]
+            
+            await db.commit()
+            await db.refresh(sub_event)
+            return sub_event.id, f"Successfully updated sub-event: {sub_event.name}"
+        
+        elif action == "reschedule":
+            if data.get("new_date"):
+                new_date = data["new_date"]
+                if isinstance(new_date, str):
+                    new_date = date.fromisoformat(new_date)
+                sub_event.date = new_date
+            
+            if data.get("new_start_time"):
+                time_str = data["new_start_time"]
+                if isinstance(time_str, str):
+                    parts = time_str.split(":")
+                    sub_event.start_time = dt_time(int(parts[0]), int(parts[1]))
+                else:
+                    sub_event.start_time = time_str
+            
+            if data.get("new_end_time"):
+                time_str = data["new_end_time"]
+                if isinstance(time_str, str):
+                    parts = time_str.split(":")
+                    sub_event.end_time = dt_time(int(parts[0]), int(parts[1]))
+                else:
+                    sub_event.end_time = time_str
+            
+            if data.get("new_location"):
+                sub_event.location = data["new_location"]
+            
+            await db.commit()
+            await db.refresh(sub_event)
+            return sub_event.id, f"Successfully rescheduled sub-event: {sub_event.name}"
+        
+        return None, f"Unknown action: {action}"
+    
+    async def _update_event(
+        self,
+        event_id: str,
+        data: dict,
+        db: AsyncSession,
+    ) -> tuple[Optional[str], str]:
+        """Update main event details."""
+        result = await db.execute(select(Event).where(Event.id == event_id))
+        event = result.scalar_one_or_none()
+        
+        if not event:
+            return None, "Event not found"
+        
+        if data.get("name"):
+            event.name = data["name"]
+        if data.get("start_date"):
+            start_date = data["start_date"]
+            if isinstance(start_date, str):
+                start_date = date.fromisoformat(start_date)
+            event.start_date = start_date
+        if data.get("end_date"):
+            end_date = data["end_date"]
+            if isinstance(end_date, str):
+                end_date = date.fromisoformat(end_date)
+            event.end_date = end_date
+        if data.get("location"):
+            event.location = data["location"]
+        if data.get("location_city"):
+            event.location_city = data["location_city"]
+        if data.get("description"):
+            event.description = data["description"]
+        
+        await db.commit()
+        await db.refresh(event)
+        return event.id, f"Successfully updated event: {event.name}"
 
 
 def get_extraction_service() -> ExtractionService:

@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EventOps AI</title>
+  <link rel="stylesheet" href="/static/css/glassmorphism.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar Container -->
+    <aside class="sidebar-container">
+      <!-- Card 1: Logo -->
+      <div class="sidebar-card sidebar-logo-card">
+        <div class="logo">
+          <div class="logo-icon">
+            <i class="fas fa-calendar-check"></i>
+          </div>
+          <span class="logo-text">EventOps</span>
+        </div>
+      </div>
+      
+      <!-- Card 2: Current Event -->
+      <div class="sidebar-card sidebar-event-card" id="sidebarEventSelector">
+        <div class="sidebar-event-label">Current Event</div>
+        <div class="sidebar-event-selector">
+          <select class="sidebar-event-dropdown" id="eventSelector">
+            <option value="">Select Event...</option>
+          </select>
+        </div>
+        <button class="sidebar-add-event-btn" onclick="showCreateEventModal()" title="Create New Event">
+          <i class="fas fa-plus"></i> New Event
+        </button>
+      </div>
+      
+      <!-- Card 3: Navigation -->
+      <div class="sidebar-card sidebar-nav-card">
+        <nav class="nav">
+          <a class="nav-item active" data-view="dashboard">
+            <i class="fas fa-th-large"></i>
+            Dashboard
+          </a>
+          <a class="nav-item" data-view="events">
+            <i class="fas fa-calendar-alt"></i>
+            Events
+          </a>
+          <a class="nav-item" data-view="vendors">
+            <i class="fas fa-store"></i>
+            Vendors
+          </a>
+          <a class="nav-item" data-view="payments">
+            <i class="fas fa-credit-card"></i>
+            Payments
+          </a>
+          <a class="nav-item" data-view="tasks">
+            <i class="fas fa-check-circle"></i>
+            Tasks
+          </a>
+        </nav>
+        
+        <div class="nav-divider"></div>
+        
+        <nav class="nav">
+          <a class="nav-item" data-view="calendar">
+            <i class="fas fa-calendar-day"></i>
+            Calendar
+          </a>
+        </nav>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main">
+      <!-- Dashboard View -->
+      <div id="view-dashboard" class="view-content">
+        <div class="main-content">
+          <!-- Welcome State (shown when no events) -->
+          <div id="welcomeState" class="welcome-state">
+            <div class="welcome-icon">
+              <i class="fas fa-calendar-plus"></i>
+            </div>
+            <h1>Welcome to EventOps</h1>
+            <p>Your AI-powered event planning assistant. Create your first event to get started.</p>
+            <button class="btn btn-primary btn-lg" onclick="showCreateEventModal()">
+              <i class="fas fa-plus"></i> Create Your First Event
+            </button>
+          </div>
+
+          <!-- Dashboard Content (shown when events exist) -->
+          <div id="dashboardContent" style="display: none;">
+            <!-- Stats Grid -->
+            <div class="stats-grid">
+              <div class="stat-card purple">
+                <div class="stat-label">Total Paid</div>
+                <div class="stat-value" id="stat-paid">$0</div>
+              </div>
+              <div class="stat-card orange">
+                <div class="stat-label">Total Pending</div>
+                <div class="stat-value" id="stat-pending">$0</div>
+              </div>
+              <div class="stat-card green">
+                <div class="stat-label">Pending Tasks</div>
+                <div class="stat-value" id="stat-tasks">0</div>
+              </div>
+              <div class="stat-card yellow">
+                <div class="stat-label">Upcoming</div>
+                <div class="upcoming-list" id="stat-upcoming">
+                  <div class="upcoming-empty">No upcoming items</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Content Grid -->
+            <div class="content-grid">
+              <div class="section-card">
+                <div class="section-header">
+                  <span class="section-title">Recent Payments</span>
+                </div>
+                <div class="item-list" id="recentPayments">
+                  <div class="empty-state">
+                    <div class="empty-state-icon"><i class="fas fa-credit-card"></i></div>
+                    <p>No payments yet</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section-card">
+                <div class="section-header">
+                  <span class="section-title">Open Tasks</span>
+                </div>
+                <div class="item-list" id="openTasks">
+                  <div class="empty-state">
+                    <div class="empty-state-icon"><i class="fas fa-check-circle"></i></div>
+                    <p>All caught up!</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Events View -->
+      <div id="view-events" class="view-content hidden">
+        <div class="main-content">
+          <div class="page-header">
+            <h1 class="page-title">Events</h1>
+            <button class="btn btn-primary" onclick="showCreateEventModal()">
+              <i class="fas fa-plus"></i> New Event
+            </button>
+          </div>
+          <div class="events-grid" id="eventsList"></div>
+        </div>
+      </div>
+
+      <!-- Vendors View -->
+      <div id="view-vendors" class="view-content hidden">
+        <div class="main-content">
+          <div class="page-header">
+            <h1 class="page-title">Vendors</h1>
+          </div>
+          <div class="section-card">
+            <div class="item-list" id="vendorsList">
+              <div class="empty-state">
+                <div class="empty-state-icon"><i class="fas fa-store"></i></div>
+                <p>No vendors yet. Tell me about your vendors!</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Payments View -->
+      <div id="view-payments" class="view-content hidden">
+        <div class="main-content">
+          <div class="page-header">
+            <h1 class="page-title">Payments</h1>
+          </div>
+          <div class="section-card">
+            <div class="item-list" id="paymentsList">
+              <div class="empty-state">
+                <div class="empty-state-icon"><i class="fas fa-credit-card"></i></div>
+                <p>No payments recorded yet</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tasks View -->
+      <div id="view-tasks" class="view-content hidden">
+        <div class="main-content">
+          <div class="page-header">
+            <h1 class="page-title">Tasks</h1>
+          </div>
+          <div class="section-card">
+            <div class="item-list" id="allTasksList">
+              <div class="empty-state">
+                <div class="empty-state-icon"><i class="fas fa-tasks"></i></div>
+                <p>No tasks yet</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Calendar View -->
+      <div id="view-calendar" class="view-content hidden">
+        <div class="main-content">
+          <div class="page-header">
+            <h1 class="page-title">Calendar</h1>
+          </div>
+          <div class="section-card">
+            <div class="item-list" id="calendarList">
+              <div class="empty-state">
+                <div class="empty-state-icon"><i class="fas fa-calendar-day"></i></div>
+                <p>No calendar events yet</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- PERSISTENT AI ASSISTANT - Always visible -->
+    <div class="ai-assistant">
+      <div class="chat-header">
+        <div class="chat-title">
+          <i class="fas fa-sparkles"></i>
+          AI Assistant
+        </div>
+        <span class="chat-badge">Beta</span>
+      </div>
+      
+      <div class="chat-body">
+        <div class="chat-messages" id="captureMessages">
+          <div class="message message-ai">
+            Tell me about payments, tasks, or events in plain English. I'll help you track everything!
+          </div>
+        </div>
+      </div>
+      
+      <div class="chat-input-area">
+        <div class="chat-input-wrapper">
+          <input 
+            type="text" 
+            class="chat-input" 
+            id="captureInput" 
+            placeholder="Just bought my reception suit for $800..."
+            onfocus="clearPlaceholder()"
+            onblur="restorePlaceholder()"
+            onkeypress="handleCaptureKeypress(event)"
+          >
+          <button class="chat-send-btn" onclick="submitCapture()">
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Event Modal -->
+  <div class="modal-overlay" id="createEventModal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2>Create Event</h2>
+        <button class="btn btn-ghost btn-sm" onclick="hideCreateEventModal()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <form id="createEventForm" onsubmit="createEvent(event)">
+        <div class="modal-section">
+          <h3 class="modal-section-title">Basic Information</h3>
+          <div class="input-row">
+            <div class="input-group flex-1">
+              <label>Event Name</label>
+              <input type="text" class="input" id="eventName" placeholder="Smith Wedding" required>
+            </div>
+            <div class="input-group">
+              <label>Event Type</label>
+              <select class="select" id="eventType" required>
+                <option value="wedding">Wedding</option>
+                <option value="indian_wedding">Indian Wedding</option>
+                <option value="garden">Garden Wedding</option>
+                <option value="summer">Summer Wedding</option>
+                <option value="birthday">Birthday Party</option>
+                <option value="corporate">Corporate Event</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <h3 class="modal-section-title">Date Range</h3>
+          <div class="input-row">
+            <div class="input-group flex-1">
+              <label>Start Date</label>
+              <input type="date" class="input" id="eventStartDate" required>
+            </div>
+            <div class="input-group flex-1">
+              <label>End Date (Optional)</label>
+              <input type="date" class="input" id="eventEndDate">
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <h3 class="modal-section-title">Location</h3>
+          <div class="input-row">
+            <div class="input-group flex-1">
+              <label>City</label>
+              <input type="text" class="input" id="eventLocationCity" placeholder="Dallas, TX">
+            </div>
+            <div class="input-group flex-1">
+              <label>Venue (Optional)</label>
+              <input type="text" class="input" id="eventLocation" placeholder="The Grand Ballroom">
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <h3 class="modal-section-title">
+            Sub-Events
+            <button type="button" class="btn btn-sm btn-ghost" onclick="addSubEventRow()">
+              <i class="fas fa-plus"></i> Add
+            </button>
+          </h3>
+          <div class="sub-events-list" id="subEventsList">
+            <div class="sub-event-row" data-index="0">
+              <div class="input-row">
+                <div class="input-group flex-1">
+                  <label>Name</label>
+                  <input type="text" class="input sub-event-name" placeholder="e.g., Mehndi Night">
+                </div>
+                <button type="button" class="btn btn-ghost btn-sm sub-event-remove" onclick="removeSubEventRow(this)">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </div>
+              <div class="input-row">
+                <div class="input-group flex-1">
+                  <label>Date</label>
+                  <input type="date" class="input sub-event-date">
+                </div>
+                <div class="input-group flex-1">
+                  <label>Start Time</label>
+                  <input type="time" class="input sub-event-start-time">
+                </div>
+                <div class="input-group flex-1">
+                  <label>End Time</label>
+                  <input type="time" class="input sub-event-end-time">
+                </div>
+              </div>
+              <div class="input-row">
+                <div class="input-group flex-1">
+                  <label>Location</label>
+                  <input type="text" class="input sub-event-location" placeholder="Venue address">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex-between mt-5">
+          <button type="button" class="btn btn-secondary" onclick="hideCreateEventModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" onclick="createEvent(event)">Create Event</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

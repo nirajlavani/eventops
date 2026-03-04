@@ -12,6 +12,8 @@ class IntentType(str, Enum):
     TASK = "task"
     CALENDAR_EVENT = "calendar_event"
     VENDOR = "vendor"
+    SUB_EVENT_UPDATE = "sub_event_update"
+    EVENT_UPDATE = "event_update"
     UNKNOWN = "unknown"
 
 
@@ -55,6 +57,30 @@ class VendorData(BaseModel):
     notes: Optional[str] = None
 
 
+class SubEventUpdateData(BaseModel):
+    """Extracted sub-event update data."""
+    
+    action: Literal["add", "update", "cancel", "reschedule"]
+    sub_event_name: Optional[str] = None
+    new_name: Optional[str] = None
+    new_date: Optional[date] = None
+    new_start_time: Optional[time] = None
+    new_end_time: Optional[time] = None
+    new_location: Optional[str] = None
+    description: Optional[str] = None
+
+
+class EventUpdateData(BaseModel):
+    """Extracted event update data."""
+    
+    name: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    location: Optional[str] = None
+    location_city: Optional[str] = None
+    description: Optional[str] = None
+
+
 class UnknownData(BaseModel):
     """Empty data for unknown intent."""
     pass
@@ -71,7 +97,7 @@ class CaptureResponse(BaseModel):
     
     intent: IntentType
     confidence: float = Field(..., ge=0.0, le=1.0)
-    data: Union[PaymentData, TaskData, CalendarEventData, VendorData, UnknownData, dict]
+    data: Union[PaymentData, TaskData, CalendarEventData, VendorData, SubEventUpdateData, EventUpdateData, UnknownData, dict]
     missing_fields: list[str] = Field(default_factory=list)
     needs_confirmation: bool = True
     log_id: str
@@ -82,7 +108,7 @@ class ConfirmRequest(BaseModel):
     
     log_id: str
     intent: IntentType
-    data: Union[PaymentData, TaskData, CalendarEventData, VendorData]
+    data: Union[PaymentData, TaskData, CalendarEventData, VendorData, SubEventUpdateData, EventUpdateData]
 
 
 class ConfirmResponse(BaseModel):
