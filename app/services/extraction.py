@@ -14,6 +14,7 @@ from app.models.event import Event
 from app.models.sub_event import SubEvent
 from app.services.llm_service import LLMService, get_llm_service
 from app.schemas.capture import (
+    ActionType,
     IntentType,
     PaymentData,
     TaskData,
@@ -35,14 +36,21 @@ class ExtractionService:
         user_input: str,
         event_id: str,
         db: AsyncSession,
+        context: Optional[str] = None,
     ) -> tuple[dict, str]:
         """
-        Extract intent and data from user input.
+        Extract intent and data from user input with optional context.
+        
+        Args:
+            user_input: Natural language input from user
+            event_id: The event this extraction is for
+            db: Database session
+            context: Optional context string with existing records
         
         Returns:
             Tuple of (extraction_result, log_id)
         """
-        result = await self.llm_service.extract_intent_and_data(user_input)
+        result = await self.llm_service.extract_intent_and_data(user_input, context)
         
         ai_log = AILog(
             event_id=event_id,
@@ -64,12 +72,23 @@ class ExtractionService:
         intent: IntentType,
         data: dict,
         db: AsyncSession,
+        action: ActionType = ActionType.CREATE,
+        reference_id: Optional[str] = None,
     ) -> tuple[bool, str, Optional[str]]:
         """
         Confirm extracted data and persist to database.
         
+        Args:
+            log_id: The AI log ID for this extraction
+            event_id: The event ID
+            intent: The intent type
+            data: The extracted data
+            db: Database session
+            action: "create" for new records, "update" for modifications
+            reference_id: ID of existing record to update (if action=update)
+        
         Returns:
-            Tuple of (success, message, created_id)
+            Tuple of (success, message, record_id)
         """
         result = await db.execute(select(AILog).where(AILog.id == log_id))
         ai_log = result.scalar_one_or_none()
@@ -78,11 +97,15 @@ class ExtractionService:
             return False, "AI log not found", None
         
         try:
-            created_id = None
+            record_id = None
             
             if intent == IntentType.PAYMENT:
-                created_id = await self._create_payment(event_id, data, db)
-                message = "Successfully created payment"
+                if action == ActionType.UPDATE and reference_id:
+                    created_id = await self._update_payment(reference_id, data, db)
+                    message = "Successfully updated payment"
+                else:
+                    created_id = await self._create_payment(event_id, data, db)
+                    message = "Successfully created payment"
             elif intent == IntentType.TASK:
                 created_id = await self._create_task(event_id, data, db)
                 message = "Successfully created task"
@@ -105,6 +128,7 @@ class ExtractionService:
             await db.commit()
             
             return True, message, created_id
+
             
         except Exception as e:
             ai_log.status = AILogStatus.ERROR
@@ -122,6 +146,80 @@ class ExtractionService:
         ai_log.status = AILogStatus.REJECTED
         await db.commit()
         return True
+    
+    async def _update_payment(
+        self,
+        payment_id: str,
+        data: dict,
+        db: AsyncSession,
+    ) -> str:
+        """Update an existing payment record (e.g., paying remaining balance or refund)."""
+        import re
+        
+        result = await db.execute(select(Payment).where(Payment.id == payment_id))
+        payment = result.scalar_one_or_none()
+        
+        if not payment:
+            raise ValueError(f"Payment {payment_id} not found")
+        
+        amount_paid = data.get("amount_paid")
+        remaining = data.get("remaining_balance")
+        
+        is_refund = (
+            (amount_paid == 0 or amount_paid == "0") and 
+            (remaining == 0 or remaining == "0")
+        )
+        
+        if is_refund:
+            payment.amount = 0
+            payment.due_date = None
+            payment.paid_date = None
+            if payment.notes:
+                payment.notes = re.sub(r"REMAINING_BALANCE:\s*\d+(?:\.\d+)?;?\s*", "", payment.notes).strip("; ")
+        else:
+            if amount_paid:
+                amount = amount_paid
+                if isinstance(amount, str):
+                    amount = float(amount)
+                payment.amount = (payment.amount or 0) + amount
+            
+            if data.get("payment_date"):
+                if isinstance(data["payment_date"], str):
+                    payment.paid_date = date.fromisoformat(data["payment_date"])
+                else:
+                    payment.paid_date = data["payment_date"]
+            elif amount_paid:
+                payment.paid_date = date.today()
+            
+            if remaining is not None:
+                remaining_val = float(remaining) if isinstance(remaining, str) else remaining
+                if remaining_val == 0:
+                    payment.due_date = None
+                    if payment.notes:
+                        payment.notes = re.sub(r"REMAINING_BALANCE:\s*\d+(?:\.\d+)?;?\s*", "", payment.notes).strip("; ")
+                else:
+                    if payment.notes:
+                        if "REMAINING_BALANCE:" in payment.notes:
+                            payment.notes = re.sub(
+                                r"REMAINING_BALANCE:\s*\d+(?:\.\d+)?",
+                                f"REMAINING_BALANCE: {remaining_val}",
+                                payment.notes
+                            )
+                        else:
+                            payment.notes = f"{payment.notes}; REMAINING_BALANCE: {remaining_val}"
+                    else:
+                        payment.notes = f"REMAINING_BALANCE: {remaining_val}"
+        
+        if data.get("method"):
+            payment.method = data["method"]
+        
+        if data.get("notes"):
+            existing_notes = payment.notes or ""
+            payment.notes = f"{existing_notes}; {data['notes']}".strip("; ")
+        
+        await db.commit()
+        await db.refresh(payment)
+        return payment.id
     
     async def _create_payment(
         self,
@@ -144,7 +242,8 @@ class ExtractionService:
             if vendor:
                 vendor_id = vendor.id
         
-        amount = data.get("amount_paid") or data.get("remaining_balance") or 0
+        amount = data.get("amount_paid") or 0
+        remaining_balance = data.get("remaining_balance") or 0
         
         due_date = None
         if data.get("due_date"):
@@ -162,6 +261,14 @@ class ExtractionService:
         elif data.get("amount_paid"):
             paid_date = date.today()
         
+        notes_parts = []
+        if data.get("notes"):
+            notes_parts.append(data["notes"])
+        if vendor_name:
+            notes_parts.append(f"Vendor: {vendor_name}")
+        if remaining_balance:
+            notes_parts.append(f"REMAINING_BALANCE: {remaining_balance}")
+        
         payment = Payment(
             event_id=event_id,
             vendor_id=vendor_id,
@@ -169,7 +276,7 @@ class ExtractionService:
             paid_date=paid_date,
             due_date=due_date,
             method=data.get("method"),
-            notes=data.get("notes"),
+            notes="; ".join(notes_parts) if notes_parts else None,
         )
         db.add(payment)
         await db.commit()

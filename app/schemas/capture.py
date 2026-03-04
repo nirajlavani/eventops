@@ -17,6 +17,12 @@ class IntentType(str, Enum):
     UNKNOWN = "unknown"
 
 
+class ActionType(str, Enum):
+    """Action types for extraction."""
+    CREATE = "create"
+    UPDATE = "update"
+
+
 class PaymentData(BaseModel):
     """Extracted payment data."""
     
@@ -96,10 +102,12 @@ class CaptureResponse(BaseModel):
     """Response schema for NL capture extraction."""
     
     intent: IntentType
+    action: ActionType = ActionType.CREATE
     confidence: float = Field(..., ge=0.0, le=1.0)
     data: Union[PaymentData, TaskData, CalendarEventData, VendorData, SubEventUpdateData, EventUpdateData, UnknownData, dict]
     missing_fields: list[str] = Field(default_factory=list)
     needs_confirmation: bool = True
+    reference_id: Optional[str] = None
     log_id: str
 
 
@@ -108,6 +116,8 @@ class ConfirmRequest(BaseModel):
     
     log_id: str
     intent: IntentType
+    action: ActionType = ActionType.CREATE
+    reference_id: Optional[str] = None
     data: Union[PaymentData, TaskData, CalendarEventData, VendorData, SubEventUpdateData, EventUpdateData]
 
 

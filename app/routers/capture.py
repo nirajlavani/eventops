@@ -1,11 +1,17 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+
+logger = logging.getLogger(__name__)
 from app.models.event import Event
 from app.services.extraction import ExtractionService, get_extraction_service
+from app.services.context_service import ContextService, get_context_service
 from app.schemas.capture import (
+    ActionType,
     CaptureRequest,
     CaptureResponse,
     ConfirmRequest,
@@ -39,27 +45,36 @@ async def extract_from_text(
     request: CaptureRequest,
     db: AsyncSession = Depends(get_db),
     extraction_service: ExtractionService = Depends(get_extraction_service),
+    context_service: ContextService = Depends(get_context_service),
 ) -> CaptureResponse:
     """
-    Extract structured data from natural language text.
+    Extract structured data from natural language text with contextual awareness.
     
-    The LLM will classify the intent (payment, task, calendar_event, vendor, unknown)
-    and extract relevant fields. The extracted data is returned for user
-    confirmation before being persisted.
+    The system retrieves existing payment/vendor records for context,
+    allowing the LLM to understand references like "the rest" or "remaining balance".
     
     Response includes:
     - intent: The classified intent type
+    - action: "create" for new records, "update" for modifying existing
     - confidence: Model confidence (0.0 - 1.0)
     - data: Extracted structured fields
     - missing_fields: Required fields that couldn't be extracted
     - needs_confirmation: Whether user should review before saving
+    - reference_id: ID of existing record to update (if action=update)
     """
     await get_event_or_404(event_id, db)
+    
+    payment_context = await context_service.get_payment_context(event_id, db)
+    context_str = context_service.format_context_for_prompt(payment_context)
+    
+    logger.info(f"Payment context for event {event_id}: {payment_context}")
+    logger.info(f"Formatted context:\n{context_str}")
     
     result, log_id = await extraction_service.extract(
         user_input=request.text,
         event_id=event_id,
         db=db,
+        context=context_str,
     )
     
     intent_str = result.get("intent", "unknown")
@@ -68,9 +83,16 @@ async def extract_from_text(
     except ValueError:
         intent = IntentType.UNKNOWN
     
+    action_str = result.get("action", "create")
+    try:
+        action = ActionType(action_str)
+    except ValueError:
+        action = ActionType.CREATE
+    
     data = result.get("data", {})
     missing_fields = result.get("missing_fields", [])
     needs_confirmation = result.get("needs_confirmation", True)
+    reference_id = result.get("reference_id")
     
     if intent == IntentType.PAYMENT:
         parsed_data = PaymentData(**data)
@@ -88,10 +110,12 @@ async def extract_from_text(
     
     return CaptureResponse(
         intent=intent,
+        action=action,
         confidence=result.get("confidence", 0.0),
         data=parsed_data,
         missing_fields=missing_fields,
         needs_confirmation=needs_confirmation,
+        reference_id=reference_id,
         log_id=log_id,
     )
 
@@ -109,6 +133,8 @@ async def confirm_extraction(
     After reviewing the extracted data from /extract, the user can confirm
     to save it to the appropriate table in the database.
     
+    For action="update", the reference_id indicates which record to modify.
+    
     Cannot confirm 'unknown' intent - user must provide clarification first.
     """
     await get_event_or_404(event_id, db)
@@ -121,10 +147,12 @@ async def confirm_extraction(
     
     data_dict = request.data.model_dump()
     
-    success, message, created_id = await extraction_service.confirm_and_persist(
+    success, message, record_id = await extraction_service.confirm_and_persist(
         log_id=request.log_id,
         event_id=event_id,
         intent=request.intent,
+        action=request.action,
+        reference_id=request.reference_id,
         data=data_dict,
         db=db,
     )
@@ -132,7 +160,7 @@ async def confirm_extraction(
     return ConfirmResponse(
         success=success,
         message=message,
-        created_id=created_id,
+        created_id=record_id,
     )
 
 
