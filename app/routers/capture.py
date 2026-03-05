@@ -21,7 +21,11 @@ from app.schemas.capture import (
     TaskData,
     CalendarEventData,
     VendorData,
+    QueryData,
+    QueryResults,
+    ConversationData,
     UnknownData,
+    ResponseMode,
 )
 
 router = APIRouter()
@@ -70,11 +74,19 @@ async def extract_from_text(
     logger.info(f"Payment context for event {event_id}: {payment_context}")
     logger.info(f"Formatted context:\n{context_str}")
     
+    conversation_history = None
+    if request.conversation_history:
+        conversation_history = [
+            {"role": msg.role, "content": msg.content}
+            for msg in request.conversation_history
+        ]
+    
     result, log_id = await extraction_service.extract(
         user_input=request.text,
         event_id=event_id,
         db=db,
         context=context_str,
+        conversation_history=conversation_history,
     )
     
     intent_str = result.get("intent", "unknown")
@@ -93,6 +105,17 @@ async def extract_from_text(
     missing_fields = result.get("missing_fields", [])
     needs_confirmation = result.get("needs_confirmation", True)
     reference_id = result.get("reference_id")
+    follow_up_question = result.get("follow_up_question")
+    assistant_message = result.get("assistant_message")
+    referenced_records = result.get("referenced_records")
+    query_results = None
+    
+    # Map response_mode from result
+    response_mode_str = result.get("response_mode", "confirm")
+    try:
+        response_mode = ResponseMode(response_mode_str)
+    except ValueError:
+        response_mode = ResponseMode.CONFIRM
     
     if intent == IntentType.PAYMENT:
         parsed_data = PaymentData(**data)
@@ -102,6 +125,18 @@ async def extract_from_text(
         parsed_data = CalendarEventData(**data)
     elif intent == IntentType.VENDOR:
         parsed_data = VendorData(**data)
+    elif intent == IntentType.QUERY:
+        parsed_data = QueryData(**data)
+        query_response = await extraction_service.handle_query(
+            event_id=event_id,
+            data=data,
+            db=db,
+        )
+        query_results = QueryResults(**query_response)
+        needs_confirmation = False
+    elif intent == IntentType.CONVERSATION:
+        parsed_data = ConversationData(**data) if data else ConversationData()
+        needs_confirmation = False
     elif intent == IntentType.UNKNOWN:
         parsed_data = UnknownData()
     else:
@@ -116,6 +151,11 @@ async def extract_from_text(
         missing_fields=missing_fields,
         needs_confirmation=needs_confirmation,
         reference_id=reference_id,
+        follow_up_question=follow_up_question,
+        assistant_message=assistant_message,
+        response_mode=response_mode,
+        referenced_records=referenced_records,
+        query_results=query_results,
         log_id=log_id,
     )
 

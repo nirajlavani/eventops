@@ -16,7 +16,11 @@ let placeholderInterval = null;
 let currentPlaceholderIndex = 0;
 let chatCollapseTimer = null;
 let isChatExpanded = false; // Start collapsed
+let conversationHistory = []; // Track conversation for context
+const MAX_CONVERSATION_HISTORY = 10; // Keep last 10 messages
 let isChatHovered = false;
+let isAITyping = false; // Prevent collapse while AI is responding
+let isChatFullscreen = false; // Fullscreen mode
 const CHAT_COLLAPSE_DELAY = 5000; // 5 seconds
 let collapsedPromptIndex = 0;
 
@@ -103,6 +107,18 @@ function setupChatAutoCollapse() {
   chatInput.addEventListener('blur', () => {
     resetChatCollapseTimer();
   });
+  
+  // Toggle fullscreen when clicking on chat header
+  const chatHeader = aiAssistant.querySelector('.chat-header');
+  if (chatHeader) {
+    chatHeader.addEventListener('click', (e) => {
+      // Don't toggle if clicking on buttons inside header
+      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
+        return;
+      }
+      toggleFullscreen();
+    });
+  }
 }
 
 function createCollapsedPrompt(aiAssistant) {
@@ -158,8 +174,8 @@ function resetChatCollapseTimer() {
 }
 
 function collapseChat() {
-  // Don't collapse if mouse is hovering over chat
-  if (isChatHovered) {
+  // Don't collapse if mouse is hovering, AI is typing, or fullscreen
+  if (isChatHovered || isAITyping || isChatFullscreen) {
     return;
   }
   
@@ -178,6 +194,26 @@ function expandChat() {
     aiAssistant.classList.remove('collapsed');
     isChatExpanded = true;
     hideCollapsedPrompt();
+  }
+}
+
+function toggleFullscreen() {
+  const aiAssistant = document.querySelector('.ai-assistant');
+  if (!aiAssistant) return;
+  
+  // First make sure chat is expanded
+  if (!isChatExpanded) {
+    expandChat();
+  }
+  
+  isChatFullscreen = !isChatFullscreen;
+  
+  if (isChatFullscreen) {
+    aiAssistant.classList.add('fullscreen');
+    clearChatCollapseTimer(); // Don't collapse when fullscreen
+  } else {
+    aiAssistant.classList.remove('fullscreen');
+    resetChatCollapseTimer();
   }
 }
 
@@ -820,29 +856,158 @@ async function submitCapture() {
   input.value = '';
   clearPlaceholder();
   
+  // Track user message in conversation history
+  addToConversationHistory('user', text);
+  
   showTypingIndicator();
   
   try {
     const response = await fetch(`${API_BASE}/api/events/${currentEventId}/capture/extract`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
+      body: JSON.stringify({ 
+        text,
+        conversation_history: conversationHistory
+      })
     });
     
     const result = await response.json();
     hideTypingIndicator();
     
-    if (result.intent === 'unknown') {
-      addMessage("I couldn't understand that. Try something like 'Paid decorator $500' or 'Add task to book DJ'.", 'ai');
+    // Log referenced records for debugging (if available)
+    if (result.referenced_records && result.referenced_records.length > 0) {
+      console.log('Referenced records:', result.referenced_records);
+    }
+    
+    // Use response_mode if available for cleaner routing
+    const responseMode = result.response_mode || 'confirm';
+    
+    // Handle error response mode
+    if (responseMode === 'error' || result.intent === 'unknown') {
+      const msg = result.assistant_message || "I couldn't understand that. Try something like 'Paid decorator $500' or 'Add task to book DJ'.";
+      addMessage(msg, 'ai');
+      addToConversationHistory('assistant', msg);
       return;
     }
     
+    // Handle answer response mode (queries)
+    if (responseMode === 'answer' || result.intent === 'query') {
+      const msg = result.assistant_message || result.query_results?.natural_response || "Here's what I found.";
+      addMessage(msg, 'ai');
+      addToConversationHistory('assistant', msg);
+      return;
+    }
+    
+    // Handle clarify response mode or conversation intent
+    if (responseMode === 'clarify' || result.intent === 'conversation') {
+      const msg = result.assistant_message || "I understand. Let me know if you need anything else!";
+      addMessage(msg, 'ai');
+      addToConversationHistory('assistant', msg);
+      return;
+    }
+    
+    // Handle follow-up question - show extraction with question
+    if (result.follow_up_question) {
+      pendingExtraction = result;
+      if (result.assistant_message) {
+        showExtractionWithMessage(result);
+      } else {
+        showExtractionResultWithFollowUp(result);
+      }
+      return;
+    }
+    
+    // Handle execute response mode - auto-confirm
+    if (responseMode === 'execute' || (result.assistant_message && !result.needs_confirmation)) {
+      addMessage(result.assistant_message || 'Done!', 'ai');
+      addToConversationHistory('assistant', result.assistant_message || 'Done!');
+      pendingExtraction = result;
+      await autoConfirmExtraction();
+      return;
+    }
+    
+    // Show standard extraction preview with optional assistant message (confirm mode)
     pendingExtraction = result;
-    showExtractionResult(result);
+    if (result.assistant_message) {
+      showExtractionWithMessage(result);
+    } else {
+      showExtractionResult(result);
+    }
   } catch (error) {
     hideTypingIndicator();
     addMessage('Something went wrong. Please try again.', 'ai');
     console.error('Capture error:', error);
+  }
+}
+
+function addToConversationHistory(role, content) {
+  conversationHistory.push({ role, content });
+  // Keep only the last N messages
+  if (conversationHistory.length > MAX_CONVERSATION_HISTORY) {
+    conversationHistory = conversationHistory.slice(-MAX_CONVERSATION_HISTORY);
+  }
+}
+
+function showExtractionWithMessage(result) {
+  let html = `<div class="extraction-with-message">`;
+  html += `<div class="assistant-message">${result.assistant_message}</div>`;
+  
+  if (result.needs_confirmation) {
+    html += '<div class="extraction-preview" style="margin-top: 12px;">';
+    for (const [key, value] of Object.entries(result.data)) {
+      if (value !== null && value !== undefined && value !== '') {
+        const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        html += `<div class="extraction-field">
+          <span class="extraction-label">${label}</span>
+          <span class="extraction-value">${value}</span>
+        </div>`;
+      }
+    }
+    html += '</div>';
+    
+    if (result.follow_up_question) {
+      html += `<div class="follow-up-question">
+        <i class="fas fa-question-circle"></i>
+        <span>${result.follow_up_question}</span>
+      </div>`;
+    }
+    
+    html += `<div class="confirm-actions">
+      <button class="btn btn-secondary btn-sm" onclick="cancelExtraction()">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="confirmExtraction()">Save</button>
+    </div>`;
+  }
+  
+  html += `</div>`;
+  addMessage(html, 'ai', true);
+  addToConversationHistory('assistant', result.assistant_message);
+}
+
+async function autoConfirmExtraction() {
+  if (!pendingExtraction) return;
+  
+  try {
+    const response = await fetch(`${API_BASE}/api/events/${currentEventId}/capture/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        log_id: pendingExtraction.log_id,
+        intent: pendingExtraction.intent,
+        action: pendingExtraction.action || 'create',
+        reference_id: pendingExtraction.reference_id,
+        data: pendingExtraction.data
+      })
+    });
+    
+    const confirmResult = await response.json();
+    
+    if (confirmResult.success) {
+      refreshCurrentView();
+    }
+    
+    pendingExtraction = null;
+  } catch (error) {
+    console.error('Auto-confirm error:', error);
   }
 }
 
@@ -857,6 +1022,123 @@ function showExtractionResult(result) {
     html = renderStandardExtractionPreview(result);
   }
   
+  addMessage(html, 'ai', true);
+}
+
+function showQueryResults(queryResults) {
+  let html = `<div class="query-response">`;
+  html += `<div class="query-summary">${queryResults.natural_response}</div>`;
+  
+  const results = queryResults.results;
+  
+  // Payments
+  if (results.payments && results.payments.length > 0) {
+    html += `<div class="query-section">
+      <div class="query-section-title"><i class="fas fa-credit-card"></i> Payments</div>
+      <div class="query-items">`;
+    for (const p of results.payments) {
+      const vendor = p.vendor_name || 'Unknown vendor';
+      const amount = p.amount ? `$${p.amount.toLocaleString()}` : '';
+      const date = p.paid_date ? new Date(p.paid_date).toLocaleDateString() : '';
+      html += `<div class="query-item">
+        <div class="query-item-main">
+          <span class="query-item-title">${vendor}</span>
+          <span class="query-item-value">${amount}</span>
+        </div>
+        <div class="query-item-meta">${date}${p.method ? ' • ' + p.method : ''}</div>
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+  
+  // Tasks
+  if (results.tasks && results.tasks.length > 0) {
+    html += `<div class="query-section">
+      <div class="query-section-title"><i class="fas fa-tasks"></i> Tasks</div>
+      <div class="query-items">`;
+    for (const t of results.tasks) {
+      const status = t.status || 'pending';
+      const statusClass = status === 'completed' ? 'status-complete' : 'status-pending';
+      const dueDate = t.due_date ? new Date(t.due_date).toLocaleDateString() : '';
+      html += `<div class="query-item">
+        <div class="query-item-main">
+          <span class="query-item-title">${t.title}</span>
+          <span class="query-item-badge ${statusClass}">${status}</span>
+        </div>
+        ${dueDate ? `<div class="query-item-meta">Due: ${dueDate}</div>` : ''}
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+  
+  // Calendar Events
+  if (results.calendar_events && results.calendar_events.length > 0) {
+    html += `<div class="query-section">
+      <div class="query-section-title"><i class="fas fa-calendar"></i> Upcoming Events</div>
+      <div class="query-items">`;
+    for (const e of results.calendar_events) {
+      const eventDate = e.event_date ? new Date(e.event_date).toLocaleDateString() : '';
+      const eventTime = e.event_time || '';
+      html += `<div class="query-item">
+        <div class="query-item-main">
+          <span class="query-item-title">${e.title}</span>
+        </div>
+        <div class="query-item-meta">${eventDate}${eventTime ? ' at ' + eventTime : ''}${e.location ? ' • ' + e.location : ''}</div>
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+  
+  // Vendors
+  if (results.vendors && results.vendors.length > 0) {
+    html += `<div class="query-section">
+      <div class="query-section-title"><i class="fas fa-store"></i> Vendors</div>
+      <div class="query-items">`;
+    for (const v of results.vendors) {
+      html += `<div class="query-item">
+        <div class="query-item-main">
+          <span class="query-item-title">${v.name}</span>
+          ${v.category ? `<span class="query-item-badge">${v.category}</span>` : ''}
+        </div>
+        ${v.contact_info ? `<div class="query-item-meta">${v.contact_info}</div>` : ''}
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+  
+  html += `</div>`;
+  addMessage(html, 'ai', true);
+}
+
+function showExtractionResultWithFollowUp(result) {
+  let html = `<div class="extraction-with-followup">`;
+  html += `<div style="margin-bottom: 12px;">Got it! Here's what I extracted:</div>`;
+  html += '<div class="extraction-preview">';
+  
+  for (const [key, value] of Object.entries(result.data)) {
+    if (value !== null && value !== undefined && value !== '') {
+      const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      html += `<div class="extraction-field">
+        <span class="extraction-label">${label}</span>
+        <span class="extraction-value">${value}</span>
+      </div>`;
+    }
+  }
+  
+  html += '</div>';
+  
+  // Show the follow-up question
+  html += `<div class="follow-up-question">
+    <i class="fas fa-question-circle"></i>
+    <span>${result.follow_up_question}</span>
+  </div>`;
+  
+  html += `<div class="confirm-actions">
+    <button class="btn btn-secondary btn-sm" onclick="cancelExtraction()">Cancel</button>
+    <button class="btn btn-primary btn-sm" onclick="confirmExtraction()">Save Anyway</button>
+  </div>`;
+  
+  html += `</div>`;
   addMessage(html, 'ai', true);
 }
 
@@ -1046,6 +1328,9 @@ function addMessage(content, type, isHtml = false) {
 }
 
 function showTypingIndicator() {
+  isAITyping = true;
+  clearChatCollapseTimer(); // Don't collapse while typing
+  
   const container = document.getElementById('captureMessages');
   const indicator = document.createElement('div');
   indicator.className = 'message message-ai';
@@ -1056,7 +1341,9 @@ function showTypingIndicator() {
 }
 
 function hideTypingIndicator() {
+  isAITyping = false;
   document.getElementById('typingIndicator')?.remove();
+  resetChatCollapseTimer(); // Restart collapse timer after response
 }
 
 // Modal
