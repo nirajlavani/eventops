@@ -287,6 +287,138 @@ class ExtractionService:
         await db.refresh(payment)
         return payment.id
     
+    def _infer_vendor_category(self, vendor_name: str) -> str | None:
+        """Infer vendor category from common vendor type names."""
+        if not vendor_name:
+            return None
+        name_lower = vendor_name.lower()
+        category_map = {
+            # Photography
+            "photographer": "photography",
+            "photography": "photography",
+            "photo": "photography",
+            "candid": "photography",
+            # Videography
+            "videographer": "videography",
+            "videography": "videography",
+            "video": "videography",
+            "film": "videography",
+            "cinemat": "videography",
+            # Catering
+            "caterer": "catering",
+            "catering": "catering",
+            "food": "catering",
+            "chaat": "catering",
+            "halwai": "catering",
+            "cook": "catering",
+            # Florist
+            "florist": "florist",
+            "flowers": "florist",
+            "floral": "florist",
+            "garland": "florist",
+            "varmala": "florist",
+            "phool": "florist",
+            # Music & DJ
+            "dj": "music_dj",
+            "band": "music_dj",
+            "musician": "music_dj",
+            "dhol": "music_dj",
+            "orchestra": "music_dj",
+            "anchor": "music_dj",
+            "emcee": "music_dj",
+            "sangeet": "music_dj",
+            # Decor
+            "decorator": "decor",
+            "decor": "decor",
+            "mandap": "decor",
+            "stage": "decor",
+            "lighting": "decor",
+            # Makeup & Hair
+            "makeup": "makeup_hair",
+            "hair": "makeup_hair",
+            "mua": "makeup_hair",
+            "bridal look": "makeup_hair",
+            "stylist": "makeup_hair",
+            # Mehndi
+            "mehndi": "mehndi",
+            "henna": "mehndi",
+            "mehendi": "mehndi",
+            # Officiant
+            "officiant": "officiant",
+            "minister": "officiant",
+            "priest": "officiant",
+            "pastor": "officiant",
+            "rabbi": "officiant",
+            "pandit": "officiant",
+            "purohit": "officiant",
+            "pujari": "officiant",
+            # Transportation
+            "transportation": "transportation",
+            "limo": "transportation",
+            "doli": "transportation",
+            "palki": "transportation",
+            "ghodi": "transportation",
+            "baraat": "transportation",
+            # Rentals
+            "rental": "rentals",
+            "rentals": "rentals",
+            "tent": "rentals",
+            "shamiyana": "rentals",
+            "crockery": "rentals",
+            # Bakery
+            "baker": "bakery",
+            "bakery": "bakery",
+            "cake": "bakery",
+            "dessert": "bakery",
+            "mithai": "bakery",
+            "sweet": "bakery",
+            # Invitations
+            "invitation": "invitations",
+            "stationery": "invitations",
+            "card": "invitations",
+            # Venue
+            "venue": "venue",
+            "hall": "venue",
+            "ballroom": "venue",
+            "resort": "venue",
+            "farmhouse": "venue",
+            "palace": "venue",
+            "lawn": "venue",
+            "banquet": "venue",
+            # Attire
+            "lehenga": "attire",
+            "saree": "attire",
+            "sherwani": "attire",
+            "boutique": "attire",
+            "tailor": "attire",
+            "bridal wear": "attire",
+            "groom wear": "attire",
+            # Jewelry
+            "jewel": "jewelry",
+            "kundan": "jewelry",
+            "polki": "jewelry",
+            "gold": "jewelry",
+            # Choreographer
+            "choreograph": "choreographer",
+            "dance": "choreographer",
+            # Planner
+            "planner": "planner",
+            "coordinator": "planner",
+            "organizer": "planner",
+            # Favors
+            "favor": "favors",
+            "gift": "favors",
+            "trousseau": "favors",
+            "return gift": "favors",
+            # Travel
+            "honeymoon": "travel",
+            "travel": "travel",
+        }
+        for keyword, category in category_map.items():
+            if keyword in name_lower:
+                return category
+        return None
+
     async def _create_payment(
         self,
         event_id: str,
@@ -296,6 +428,10 @@ class ExtractionService:
         """Create a payment from extracted data."""
         vendor_id = None
         vendor_name = data.get("vendor_name")
+        vendor_category = data.get("vendor_category")
+        
+        if not vendor_category and vendor_name:
+            vendor_category = self._infer_vendor_category(vendor_name)
         
         if vendor_name:
             result = await db.execute(
@@ -307,8 +443,17 @@ class ExtractionService:
             vendor = result.scalar_one_or_none()
             if vendor:
                 vendor_id = vendor.id
+            else:
+                new_vendor = Vendor(
+                    event_id=event_id,
+                    name=vendor_name,
+                    category=vendor_category or "other",
+                )
+                db.add(new_vendor)
+                await db.flush()
+                vendor_id = new_vendor.id
         
-        amount = data.get("amount_paid") or 0
+        amount = data.get("amount_paid") or data.get("amount") or 0
         remaining_balance = data.get("remaining_balance") or 0
         
         due_date = None
@@ -324,45 +469,59 @@ class ExtractionService:
                 paid_date = date.fromisoformat(data["payment_date"])
             else:
                 paid_date = data["payment_date"]
-        elif data.get("amount_paid"):
+        elif data.get("paid_date"):
+            if isinstance(data["paid_date"], str):
+                paid_date = date.fromisoformat(data["paid_date"])
+            else:
+                paid_date = data["paid_date"]
+        elif amount and amount > 0:
             paid_date = date.today()
         
-        notes_parts = []
-        if data.get("notes"):
-            notes_parts.append(data["notes"])
-        if vendor_name:
-            notes_parts.append(f"Vendor: {vendor_name}")
-        if remaining_balance:
-            notes_parts.append(f"REMAINING_BALANCE: {remaining_balance}")
+        description = data.get("description") or ""
+        if not description and vendor_name:
+            description = f"Payment to {vendor_name}"
         
         payment = Payment(
             event_id=event_id,
             vendor_id=vendor_id,
             amount=amount,
             paid_date=paid_date,
-            due_date=due_date,
+            due_date=None,
             method=data.get("method"),
-            notes="; ".join(notes_parts) if notes_parts else None,
+            notes=description,
         )
         db.add(payment)
+        await db.flush()
+        
+        remaining_amount = 0
+        try:
+            remaining_amount = float(remaining_balance) if remaining_balance else 0
+        except (ValueError, TypeError):
+            remaining_amount = 0
+        
+        if remaining_amount > 0:
+            pending_payment = Payment(
+                event_id=event_id,
+                vendor_id=vendor_id,
+                amount=remaining_amount,
+                paid_date=None,
+                due_date=due_date,
+                method=None,
+                notes=f"Remaining balance to {vendor_name or 'vendor'}",
+            )
+            db.add(pending_payment)
+            
+            if due_date:
+                await self._create_payment_reminder_task(
+                    event_id=event_id,
+                    vendor_name=vendor_name or "Vendor",
+                    amount=remaining_amount,
+                    due_date=due_date,
+                    db=db,
+                )
+        
         await db.commit()
         await db.refresh(payment)
-        
-        # Auto-create a task for upcoming payment if there's a due date with remaining balance
-        remaining_balance = data.get("remaining_balance")
-        if due_date and remaining_balance:
-            try:
-                remaining_amount = float(remaining_balance) if remaining_balance else 0
-                if remaining_amount > 0:
-                    await self._create_payment_reminder_task(
-                        event_id=event_id,
-                        vendor_name=vendor_name or "Vendor",
-                        amount=remaining_amount,
-                        due_date=due_date,
-                        db=db,
-                    )
-            except (ValueError, TypeError):
-                pass
         
         return payment.id
     

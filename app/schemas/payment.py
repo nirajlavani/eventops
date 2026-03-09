@@ -40,3 +40,20 @@ class PaymentResponse(PaymentBase):
     id: str
     event_id: str
     created_at: datetime
+
+
+class PaymentWithVendor(BaseModel):
+    """Payment response with vendor details."""
+    
+    id: str
+    event_id: str
+    vendor_id: Optional[str] = None
+    vendor_name: Optional[str] = None
+    amount: Decimal
+    amount_paid: Decimal = Decimal(0)
+    paid_date: Optional[date] = None
+    due_date: Optional[date] = None
+    method: Optional[str] = None
+    notes: Optional[str] = None
+    description: Optional[str] = None
+    created_at: datetime

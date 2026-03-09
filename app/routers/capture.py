@@ -68,11 +68,12 @@ async def extract_from_text(
     """
     await get_event_or_404(event_id, db)
     
-    payment_context = await context_service.get_payment_context(event_id, db)
-    context_str = context_service.format_context_for_prompt(payment_context)
+    # Get full context including payments, vendors, tasks, and sub-events
+    full_context = await context_service.get_full_context(event_id, db)
+    context_str = context_service.format_full_context_for_prompt(full_context)
     
-    logger.info(f"Payment context for event {event_id}: {payment_context}")
-    logger.info(f"Formatted context:\n{context_str}")
+    logger.info(f"Full context for event {event_id}: payments={len(full_context.get('payments', []))}, vendors={len(full_context.get('vendors', []))}, tasks={len(full_context.get('tasks', []))}, sub_events={len(full_context.get('sub_events', []))}")
+    logger.debug(f"Formatted context:\n{context_str}")
     
     conversation_history = None
     if request.conversation_history:

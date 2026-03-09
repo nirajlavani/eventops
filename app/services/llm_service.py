@@ -5,7 +5,7 @@ from datetime import date
 from typing import Literal, Optional
 
 import httpx
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.config import get_settings
 
@@ -27,6 +27,18 @@ class ExtractionResult(BaseModel):
     assistant_message: Optional[str] = None
     response_mode: Literal["confirm", "clarify", "answer", "execute", "error"] = "confirm"
     referenced_records: Optional[list[str]] = None
+    
+    @field_validator('action', mode='before')
+    @classmethod
+    def default_action_if_none(cls, v):
+        """Convert None to 'create' default."""
+        return v if v is not None else "create"
+    
+    @field_validator('response_mode', mode='before')
+    @classmethod
+    def default_response_mode_if_none(cls, v):
+        """Convert None to 'confirm' default."""
+        return v if v is not None else "confirm"
 
 
 class LLMService:
@@ -120,6 +132,72 @@ CRITICAL - BULK ADD OPERATIONS:
   - In data, include: items: [{{title: "...", ...}}, {{title: "...", ...}}] as an array
 - Example response: assistant_message="Got it! Adding these 3 tasks:\n1. Find a makeup artist\n2. Find a pujari for the ceremonies\n3. Buy groomsmen gifts\n\nDo you have deadlines for any of these?"
 
+CRITICAL - CONVERSATION CONTEXT FOR FOLLOW-UPS:
+- When user provides a short response (like just a name "Kirtanbhai" or "Video Vihaar"), ALWAYS look at the CONVERSATION HISTORY to understand context!
+- The conversation history shows what was previously discussed.
+- Example flow:
+  1. Previous: User said "I paid my priest $5K yesterday"
+  2. Previous: You asked "What's the name of your priest?"
+  3. Current: User says "Kirtanbhai"
+  - YOU MUST recognize this is the priest's name from context
+  - Set vendor_name="Kirtanbhai", vendor_category="officiant" (because priest=officiant)
+  - Use ALL the details from the original message: amount=$5000, payment_date=yesterday
+- NEVER treat a follow-up name response as a new standalone request!
+- Always combine information from the conversation history with the current response.
+
+CRITICAL - EMPTY DATA AWARENESS:
+- ALWAYS check the CONTEXT to see what data actually exists.
+- If user asks about data that doesn't exist, respond helpfully without pretending to look it up.
+- Examples of empty data responses:
+  - User: "What's my largest expense?" Context shows: No payments recorded.
+    BAD: "Let me find your largest expense. I'll pull up the payment with the highest amount."
+    GOOD: assistant_message="You don't have any payments recorded yet. Once you add some payments, I can help you track your largest expenses!"
+  - User: "Show me all vendors" Context shows: No vendors.
+    GOOD: assistant_message="You haven't added any vendors yet. Would you like to add one? Just tell me the vendor name and category!"
+  - User: "What tasks are due this week?" Context shows: No tasks.
+    GOOD: assistant_message="You don't have any tasks yet. Want me to create some? Just say something like 'Add task: book florist by Friday'"
+- Use intent="query" and response_mode="answer" for these - you ARE answering their question, just with "no data" as the answer.
+- Be helpful and suggest next steps when data is missing.
+
+CRITICAL - NEW VENDOR DETECTION:
+- When user mentions a vendor name NOT in the CONTEXT's VENDORS list:
+  - This is a NEW vendor that needs to be created
+  - Check if the vendor category is obvious from context (e.g., "photographer", "florist", "DJ")
+  - If category is NOT obvious (e.g., "Blackberry Ridge", "The Grand Ballroom", "Rani Events"):
+    - Set response_mode="clarify" and ask about the vendor type
+    - Set intent="payment" (or appropriate) but include follow_up_question asking for vendor category
+    - Example: User says "Paid Blackberry Ridge $16,000 today"
+      Response: 
+      - assistant_message="Got it! $16,000 payment to Blackberry Ridge. What type of vendor is Blackberry Ridge? (e.g., venue, caterer, photographer, etc.)"
+      - response_mode="clarify"
+      - needs_confirmation=false (wait for clarification first)
+      - data should include: vendor_name, amount_paid, payment_date, but also vendor_category=null
+  - If category IS obvious (e.g., "Paid the photographer $5000"):
+    - Include vendor_category in the data (e.g., "photography")
+    - Proceed with normal confirmation
+- Valid vendor categories (especially for Indian weddings):
+  - venue: wedding venue, banquet hall, resort, hotel, farmhouse, palace, lawn, mandap
+  - photography: photographer, candid photography, pre-wedding shoot
+  - videography: videographer, cinematographer, wedding film
+  - catering: caterer, food, chaat stall, food stall, halwai, cook
+  - florist: florist, flowers, garlands, phoolon ki chadar, varmala
+  - music_dj: DJ, band, dhol, sangeet music, orchestra, anchor, emcee
+  - decor: decorator, wedding decor, mandap decor, stage, lighting
+  - makeup_hair: makeup artist, MUA, bridal makeup, hair stylist, family makeup
+  - mehndi: mehndi artist, henna artist, henna
+  - officiant: pandit, priest, pastor, rabbi, minister, purohit, pujari
+  - transportation: car rental, limo, vintage car, doli, palki, ghodi, baraat horse
+  - rentals: tent, shamiyana, furniture rental, crockery, sound system
+  - bakery: cake, wedding cake, desserts, mithai, sweet shop
+  - invitations: invitation cards, wedding cards, save the date, stationery
+  - attire: bridal wear, lehenga, saree, groom wear, sherwani, bridal boutique, tailor
+  - jewelry: jeweler, bridal jewelry, kundan, polki, gold
+  - choreographer: dance choreographer, sangeet choreographer
+  - planner: wedding planner, event planner, coordinator
+  - favors: wedding favors, return gifts, trousseau packing
+  - travel: honeymoon, travel agent
+  - other: anything not fitting above categories
+
 CRITICAL - DUPLICATE DETECTION:
 - Before creating a new payment/task/vendor, check the CONTEXT for similar existing records.
 - Look for: same vendor name, similar amount, recent date
@@ -208,17 +286,66 @@ Query examples:
 - "Show me pending tasks" -> query_type: "list", target: "tasks", filters: {{"status": "pending"}}
 - "What's due this week?" -> query_type: "list", target: "all", filters: {{"due_date_range": "this_week"}}
 
-For PAYMENT intent (ONLY for payments that HAVE BEEN MADE - past tense):
-- vendor_name: string or null
-- amount_paid: number or null (if user says "the rest" or "remaining", use outstanding amount from context)
-- remaining_balance: number or null (set to 0 if paying full balance)
-- payment_date: "YYYY-MM-DD" or null (when payment was made, default to today if just "paid")
-  - IMPORTANT: payment_date must be TODAY or in the PAST. Never set a future date as payment_date.
-- due_date: "YYYY-MM-DD" or null (when remaining balance is due)
-- method: string or null
-- notes: string or null
+For PAYMENT intent (for recording payments, deposits, or vendor bookings):
+- vendor_name: string (REQUIRED - if user doesn't provide a vendor name, ask for it before proceeding)
+- vendor_category: string or null (use one of: venue, photography, videography, catering, florist, music_dj, decor, makeup_hair, mehndi, officiant, transportation, rentals, bakery, invitations, attire, jewelry, choreographer, planner, favors, travel, other)
+- amount_paid: number or null (the amount already paid - if user says "booked for $X" with remaining balance, calculate: total - remaining)
+- remaining_balance: number or null (future amount still owed)
+- payment_date: "YYYY-MM-DD" or null (when payment was made, default to today)
+- due_date: "YYYY-MM-DD" or null (when remaining balance is due - CRITICAL: must be set if remaining_balance > 0)
+- method: string or null (card, cash, check, bank_transfer, etc.)
+- description: string or null (brief description of what this payment is for)
+- notes: string or null (any additional notes)
 
-IMPORTANT: If the payment is SCHEDULED FOR THE FUTURE, use TASK intent instead, NOT payment intent.
+CRITICAL - VENDOR NAME REQUIRED:
+- vendor_name must be an actual BUSINESS NAME, not a generic category!
+- WRONG vendor names (these are categories): "florist", "photographer", "caterer", "venue", "DJ", "videographer", "makeup artist", "mehndi artist"
+- CORRECT vendor names (actual businesses): "Sweet Blooms Florist", "Enmuse Photography", "Blackberry Ridge", "DJ Mike", "Bella Catering", "Video Vihaar"
+- If user says "paid my florist $500" or "paid the videographer $1000":
+  - "florist" and "videographer" are CATEGORIES, not names!
+  - IMPORTANT: Set vendor_category in the data based on what they mentioned:
+    - "florist", "flowers", "garlands" -> vendor_category="florist"
+    - "videographer", "cinematographer" -> vendor_category="videography"
+    - "photographer" -> vendor_category="photography"
+    - "mehndi artist", "henna artist" -> vendor_category="mehndi"
+    - "DJ", "band", "dhol", "anchor", "emcee" -> vendor_category="music_dj"
+    - "caterer", "food stall", "halwai" -> vendor_category="catering"
+    - "priest", "pandit", "pujari", "purohit", "pastor", "rabbi" -> vendor_category="officiant"
+    - "decorator", "mandap decor", "lighting" -> vendor_category="decor"
+    - "makeup artist", "MUA", "hair stylist" -> vendor_category="makeup_hair"
+    - "choreographer", "dance teacher" -> vendor_category="choreographer"
+    - "wedding planner", "coordinator" -> vendor_category="planner"
+    - "lehenga", "sherwani", "boutique", "tailor" -> vendor_category="attire"
+    - "jeweler", "jewelry" -> vendor_category="jewelry"
+    - "venue", "banquet", "resort", "farmhouse" -> vendor_category="venue"
+    - "car rental", "limo", "doli", "ghodi" -> vendor_category="transportation"
+    - "cake", "mithai", "desserts" -> vendor_category="bakery"
+    - "invitation cards", "stationery" -> vendor_category="invitations"
+    - "tent", "rentals", "shamiyana" -> vendor_category="rentals"
+    - "favors", "return gifts", "trousseau" -> vendor_category="favors"
+    - "honeymoon", "travel agent" -> vendor_category="travel"
+  - Set response_mode="clarify"
+  - Ask: "What's the name of the florist/videographer? (e.g., the business or person's name)"
+  - KEEP vendor_category in the data - this is critical for proper categorization!
+  - Do NOT create the payment until you have the actual business name
+- When user responds with the name (e.g., "Video Vihaar"):
+  - Set vendor_name to what they provided
+  - PRESERVE vendor_category from the previous context (e.g., "videography")
+  - Proceed with confirmation
+- If user provides both upfront (e.g., "paid Sweet Blooms Florist $500"):
+  - vendor_name="Sweet Blooms Florist", vendor_category="florist"
+  - Proceed normally
+
+BOOKING SCENARIOS:
+- "I have a photographer booked for $10,000, remaining $5,000 due Aug 1st":
+  - This means total=$10,000, remaining=$5,000, so amount_paid=$5,000 (the deposit already made)
+  - Set amount_paid=5000, remaining_balance=5000, due_date="2026-08-01", payment_date=today
+  - This creates BOTH a payment record AND a pending payment record
+- "Booked the venue for $20,000, put down $5,000 deposit":
+  - amount_paid=5000, remaining_balance=15000
+- Always infer amount_paid = total_cost - remaining_balance when user gives both values
+
+IMPORTANT: If ONLY a future payment is mentioned with NO deposit/booking (pure future payment), use TASK intent instead.
 
 For TASK intent, extract into data:
 - title: string (required) - e.g., "Pay $10,000 to Enmuse Photography"

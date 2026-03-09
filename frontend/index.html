@@ -4,135 +4,139 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EventOps AI</title>
+  <link rel="stylesheet" href="/static/css/branding.css">
   <link rel="stylesheet" href="/static/css/glassmorphism.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-  <div class="app-layout">
-    <!-- Sidebar Container -->
-    <aside class="sidebar-container">
-      <!-- Card 1: Logo -->
-      <div class="sidebar-card sidebar-logo-card">
-        <div class="logo">
-          <div class="logo-icon">
-            <i class="fas fa-calendar-check"></i>
-          </div>
-          <span class="logo-text">EventOps</span>
-        </div>
+  <div class="app-layout-v2">
+    <!-- Top Header Bar -->
+    <header class="top-header">
+      <div class="header-brand-container">
+        <img src="/static/images/logo-white.png" alt="EventOps" class="header-logo">
+        <span class="header-brand-text">EventOps</span>
       </div>
-      
-      <!-- Card 2: Current Event -->
-      <div class="sidebar-card sidebar-event-card" id="sidebarEventSelector">
-        <div class="sidebar-event-label">Current Event</div>
-        <div class="sidebar-event-selector">
-          <select class="sidebar-event-dropdown" id="eventSelector">
+    </header>
+
+    <!-- Sub Header: Event Title + Navigation -->
+    <div class="sub-header">
+      <div class="event-title-section">
+        <h1 class="event-title" id="currentEventTitle">Select an Event</h1>
+        <div class="event-selector-inline">
+          <select class="event-dropdown" id="eventSelector">
             <option value="">Select Event...</option>
           </select>
+          <button class="btn-icon" id="editEventBtn" onclick="showEditEventModal()" title="Edit Event" style="display: none;">
+            <i class="fas fa-pencil-alt"></i>
+          </button>
+          <button class="btn-icon" onclick="showCreateEventModal()" title="Create New Event">
+            <i class="fas fa-plus"></i>
+          </button>
         </div>
-        <button class="sidebar-add-event-btn" onclick="showCreateEventModal()" title="Create New Event">
-          <i class="fas fa-plus"></i> New Event
-        </button>
       </div>
       
-      <!-- Card 3: Navigation -->
-      <div class="sidebar-card sidebar-nav-card">
-        <nav class="nav">
-          <a class="nav-item active" data-view="dashboard">
-            <i class="fas fa-th-large"></i>
-            Dashboard
-          </a>
-          <a class="nav-item" data-view="events">
-            <i class="fas fa-calendar-alt"></i>
-            Events
-          </a>
-          <a class="nav-item" data-view="vendors">
-            <i class="fas fa-store"></i>
-            Vendors
-          </a>
-          <a class="nav-item" data-view="payments">
-            <i class="fas fa-credit-card"></i>
-            Payments
-          </a>
-          <a class="nav-item" data-view="tasks">
-            <i class="fas fa-check-circle"></i>
-            Tasks
-          </a>
-        </nav>
-        
-        <div class="nav-divider"></div>
-        
-        <nav class="nav">
-          <a class="nav-item" data-view="calendar">
-            <i class="fas fa-calendar-day"></i>
-            Calendar
-          </a>
-        </nav>
-      </div>
-    </aside>
+      <!-- Top Right Navigation -->
+      <nav class="top-nav">
+        <button class="nav-btn active" data-view="dashboard">
+          <i class="fas fa-home"></i>
+          <span class="nav-text">DASHBOARD</span>
+        </button>
+        <button class="nav-btn" data-view="calendar">
+          <i class="fas fa-calendar-alt"></i>
+          <span class="nav-text">CALENDAR</span>
+        </button>
+        <button class="nav-btn" data-view="payments">
+          <i class="fas fa-dollar-sign"></i>
+          <span class="nav-text">PAYMENTS</span>
+        </button>
+        <button class="nav-btn" data-view="tasks">
+          <i class="fas fa-check-circle"></i>
+          <span class="nav-text">TASKS</span>
+        </button>
+      </nav>
+    </div>
 
     <!-- Main Content -->
-    <main class="main">
+    <main class="main-v2">
       <!-- Dashboard View -->
       <div id="view-dashboard" class="view-content">
-        <div class="main-content">
+        <div class="main-content-v2">
           <!-- Welcome State (shown when no events) -->
-          <div id="welcomeState" class="welcome-state">
-            <div class="welcome-icon">
-              <i class="fas fa-calendar-plus"></i>
+          <div id="welcomeState" class="welcome-state-v2">
+            <div class="welcome-card">
+              <div class="welcome-logo">
+                <img src="/static/images/logo-white.png" alt="EventOps" class="welcome-logo-img">
+              </div>
+              <h1>Welcome to EventOps</h1>
+              <p>Your AI-powered event planning assistant. Create your first event to get started.</p>
+              <button class="btn-welcome" onclick="showCreateEventModal()">
+                <i class="fas fa-plus"></i> Create Your First Event
+              </button>
             </div>
-            <h1>Welcome to EventOps</h1>
-            <p>Your AI-powered event planning assistant. Create your first event to get started.</p>
-            <button class="btn btn-primary btn-lg" onclick="showCreateEventModal()">
-              <i class="fas fa-plus"></i> Create Your First Event
-            </button>
           </div>
 
           <!-- Dashboard Content (shown when events exist) -->
           <div id="dashboardContent" style="display: none;">
-            <!-- Stats Grid -->
-            <div class="stats-grid">
-              <div class="stat-card purple">
-                <div class="stat-label">Total Paid</div>
-                <div class="stat-value" id="stat-paid">$0</div>
+            <!-- Subtle Stats Row (blends into background) -->
+            <div class="stats-row-subtle">
+              <div class="stat-item-subtle">
+                <span class="stat-number" id="stat-subevents">0</span>
+                <span class="stat-label-subtle">SUBEVENTS</span>
               </div>
-              <div class="stat-card orange">
-                <div class="stat-label">Total Pending</div>
-                <div class="stat-value" id="stat-pending">$0</div>
+              <div class="stat-item-subtle">
+                <span class="stat-number" id="stat-vendors">0</span>
+                <span class="stat-label-subtle">VENDORS SECURED</span>
               </div>
-              <div class="stat-card green">
-                <div class="stat-label">Pending Tasks</div>
-                <div class="stat-value" id="stat-tasks">0</div>
+              <div class="stat-item-subtle">
+                <span class="stat-number" id="stat-paid">$0</span>
+                <span class="stat-label-subtle">PAID TO VENDORS</span>
               </div>
-              <div class="stat-card yellow">
-                <div class="stat-label">Upcoming</div>
-                <div class="upcoming-list" id="stat-upcoming">
-                  <div class="upcoming-empty">No upcoming items</div>
-                </div>
+              <div class="stat-item-subtle">
+                <span class="stat-number" id="stat-pending">$0</span>
+                <span class="stat-label-subtle">INCOMING PAYMENTS</span>
               </div>
             </div>
 
-            <!-- Content Grid -->
-            <div class="content-grid">
-              <div class="section-card">
-                <div class="section-header">
-                  <span class="section-title">Recent Payments</span>
-                </div>
-                <div class="item-list" id="recentPayments">
-                  <div class="empty-state">
-                    <div class="empty-state-icon"><i class="fas fa-credit-card"></i></div>
-                    <p>No payments yet</p>
+            <!-- 3-Column Dashboard Layout -->
+            <div class="dashboard-columns">
+              <!-- Column 1: Tasks -->
+              <div class="dashboard-column">
+                <div class="column-content">
+                  <div class="task-list-simple" id="dashboardTasks">
+                    <div class="task-item-simple">
+                      <span class="task-checkbox"></span>
+                      <span class="task-text">No tasks yet</span>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div class="section-card">
-                <div class="section-header">
-                  <span class="section-title">Open Tasks</span>
+              <!-- Column Divider -->
+              <div class="column-divider"></div>
+
+              <!-- Column 2: Payments -->
+              <div class="dashboard-column">
+                <div class="column-content">
+                  <div class="payment-list-simple" id="dashboardPayments">
+                    <div class="payment-item-simple">
+                      <span class="payment-vendor">No payments yet</span>
+                      <span class="payment-amount"></span>
+                    </div>
+                  </div>
                 </div>
-                <div class="item-list" id="openTasks">
-                  <div class="empty-state">
-                    <div class="empty-state-icon"><i class="fas fa-check-circle"></i></div>
-                    <p>All caught up!</p>
+              </div>
+
+              <!-- Column Divider -->
+              <div class="column-divider"></div>
+
+              <!-- Column 3: Schedule -->
+              <div class="dashboard-column">
+                <div class="column-content">
+                  <div class="schedule-list-simple" id="dashboardSchedule">
+                    <div class="schedule-item-simple">
+                      <span class="schedule-name">No upcoming events</span>
+                      <span class="schedule-date"></span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -141,47 +145,73 @@
         </div>
       </div>
 
-      <!-- Events View -->
-      <div id="view-events" class="view-content hidden">
-        <div class="main-content">
-          <div class="page-header">
-            <h1 class="page-title">Events</h1>
-            <button class="btn btn-primary" onclick="showCreateEventModal()">
-              <i class="fas fa-plus"></i> New Event
-            </button>
-          </div>
-          <div class="events-grid" id="eventsList"></div>
-        </div>
-      </div>
 
-      <!-- Vendors View -->
-      <div id="view-vendors" class="view-content hidden">
-        <div class="main-content">
-          <div class="page-header">
-            <h1 class="page-title">Vendors</h1>
-          </div>
-          <div class="section-card">
-            <div class="item-list" id="vendorsList">
-              <div class="empty-state">
-                <div class="empty-state-icon"><i class="fas fa-store"></i></div>
-                <p>No vendors yet. Tell me about your vendors!</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Payments View -->
+      <!-- Payments View (with Vendors) -->
       <div id="view-payments" class="view-content hidden">
-        <div class="main-content">
-          <div class="page-header">
-            <h1 class="page-title">Payments</h1>
+        <div class="main-content-v2">
+          <div class="two-column-layout">
+            <!-- Left: Booked Vendors -->
+            <div class="column-half">
+              <h2 class="column-title">Booked Vendors</h2>
+              <div class="vendor-list-v2" id="vendorsList">
+                <div class="empty-state-v2">
+                  <p>No vendors yet</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right: Payments -->
+            <div class="column-half">
+              <h2 class="column-title">Payment History</h2>
+              <div class="payment-list-v2" id="paymentsList">
+                <div class="empty-state-v2">
+                  <p>No payments recorded</p>
+                </div>
+              </div>
+              
+              <h2 class="column-title mt-4">Pending Payments</h2>
+              <div class="payment-list-v2" id="pendingPaymentsList">
+                <div class="empty-state-v2">
+                  <p>No pending payments</p>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="section-card">
-            <div class="item-list" id="paymentsList">
-              <div class="empty-state">
-                <div class="empty-state-icon"><i class="fas fa-credit-card"></i></div>
-                <p>No payments recorded yet</p>
+        </div>
+      </div>
+
+      <!-- Calendar View (with Events/Sub-Events) -->
+      <div id="view-calendar" class="view-content hidden">
+        <div class="main-content-v2">
+          <!-- Event Details Section -->
+          <div class="event-details-card" id="eventDetailsCard">
+            <div class="event-details-header">
+              <h2 class="event-details-name" id="eventDetailsName">Event Name</h2>
+              <div class="event-details-meta">
+                <span id="eventDetailsDate"><i class="fas fa-calendar"></i> Date</span>
+                <span id="eventDetailsLocation"><i class="fas fa-map-marker-alt"></i> Location</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="two-column-layout">
+            <!-- Left: Sub-Events -->
+            <div class="column-half">
+              <h2 class="column-title">Sub-Events</h2>
+              <div class="subevent-list-v2" id="calendarSubEventsList">
+                <div class="empty-state-v2">
+                  <p>No sub-events yet</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right: Calendar Events -->
+            <div class="column-half">
+              <h2 class="column-title">Scheduled Events</h2>
+              <div class="calendar-list-v2" id="calendarList">
+                <div class="empty-state-v2">
+                  <p>No calendar events yet</p>
+                </div>
               </div>
             </div>
           </div>
@@ -190,33 +220,10 @@
 
       <!-- Tasks View -->
       <div id="view-tasks" class="view-content hidden">
-        <div class="main-content">
-          <div class="page-header">
-            <h1 class="page-title">Tasks</h1>
-          </div>
-          <div class="section-card">
-            <div class="item-list" id="allTasksList">
-              <div class="empty-state">
-                <div class="empty-state-icon"><i class="fas fa-tasks"></i></div>
-                <p>No tasks yet</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Calendar View -->
-      <div id="view-calendar" class="view-content hidden">
-        <div class="main-content">
-          <div class="page-header">
-            <h1 class="page-title">Calendar</h1>
-          </div>
-          <div class="section-card">
-            <div class="item-list" id="calendarList">
-              <div class="empty-state">
-                <div class="empty-state-icon"><i class="fas fa-calendar-day"></i></div>
-                <p>No calendar events yet</p>
-              </div>
+        <div class="main-content-v2">
+          <div class="task-list-full" id="allTasksList">
+            <div class="empty-state-v2">
+              <p>No tasks yet</p>
             </div>
           </div>
         </div>
@@ -244,6 +251,9 @@
       
       <div class="chat-input-area">
         <div class="chat-input-wrapper">
+          <button class="chat-feedback-btn" onclick="showFeedbackPopup()" title="Report an issue">
+            <i class="fas fa-thumbs-down"></i>
+          </button>
           <input 
             type="text" 
             class="chat-input" 
@@ -367,6 +377,110 @@
           <button type="submit" class="btn btn-primary" onclick="createEvent(event)">Create Event</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Edit Event Modal -->
+  <div class="modal-overlay" id="editEventModal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2>Edit Event</h2>
+        <button class="btn btn-ghost btn-sm" onclick="hideEditEventModal()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <form id="editEventForm" onsubmit="saveEventChanges(event)">
+        <div class="modal-section">
+          <h3 class="modal-section-title">Basic Information</h3>
+          <div class="input-row">
+            <div class="input-group flex-1">
+              <label>Event Name</label>
+              <input type="text" class="input" id="editEventName" placeholder="Event Name" required>
+            </div>
+            <div class="input-group">
+              <label>Event Type</label>
+              <select class="select" id="editEventType">
+                <option value="wedding">Wedding</option>
+                <option value="indian_wedding">Indian Wedding</option>
+                <option value="garden">Garden Wedding</option>
+                <option value="summer">Summer Wedding</option>
+                <option value="birthday">Birthday Party</option>
+                <option value="corporate">Corporate Event</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <h3 class="modal-section-title">Date Range</h3>
+          <div class="input-row">
+            <div class="input-group flex-1">
+              <label>Start Date</label>
+              <input type="date" class="input" id="editEventStartDate">
+            </div>
+            <div class="input-group flex-1">
+              <label>End Date</label>
+              <input type="date" class="input" id="editEventEndDate">
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <h3 class="modal-section-title">Location</h3>
+          <div class="input-row">
+            <div class="input-group flex-1">
+              <label>City</label>
+              <input type="text" class="input" id="editEventLocationCity" placeholder="City">
+            </div>
+            <div class="input-group flex-1">
+              <label>Venue</label>
+              <input type="text" class="input" id="editEventLocation" placeholder="Venue">
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <h3 class="modal-section-title">
+            Sub-Events
+            <button type="button" class="btn btn-sm btn-ghost" onclick="addEditSubEventRow()">
+              <i class="fas fa-plus"></i> Add New
+            </button>
+          </h3>
+          <div class="sub-events-list" id="editSubEventsList">
+            <!-- Sub-events will be loaded here dynamically -->
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="hideEditEventModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Feedback Popup -->
+  <div class="feedback-popup" id="feedbackPopup">
+    <div class="feedback-popup-content">
+      <div class="feedback-popup-header">
+        <h3>Report an Issue</h3>
+        <button class="btn btn-ghost btn-sm" onclick="hideFeedbackPopup()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="feedback-popup-body">
+        <p class="feedback-hint">What went wrong? (e.g., stat didn't update, payment wasn't recorded correctly)</p>
+        <textarea 
+          id="feedbackText" 
+          class="feedback-textarea" 
+          placeholder="Describe the issue..."
+          rows="4"
+        ></textarea>
+      </div>
+      <div class="feedback-popup-footer">
+        <button class="btn btn-secondary btn-sm" onclick="hideFeedbackPopup()">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="submitFeedback()">Submit Feedback</button>
+      </div>
     </div>
   </div>
 

@@ -55,7 +55,23 @@ document.addEventListener('DOMContentLoaded', () => {
   startPlaceholderRotation();
   setupCreateEventForm();
   setupChatAutoCollapse();
+  setupWelcomeCardHover();
 });
+
+function setupWelcomeCardHover() {
+  const welcomeBtn = document.querySelector('.btn-welcome');
+  const welcomeCard = document.querySelector('.welcome-card');
+  
+  if (!welcomeBtn || !welcomeCard) return;
+  
+  welcomeBtn.addEventListener('mouseenter', () => {
+    welcomeCard.classList.add('hovered');
+  });
+  
+  welcomeBtn.addEventListener('mouseleave', () => {
+    welcomeCard.classList.remove('hovered');
+  });
+}
 
 // Chat Auto-Collapse Functions
 function setupChatAutoCollapse() {
@@ -194,6 +210,7 @@ function expandChat() {
     aiAssistant.classList.remove('collapsed');
     isChatExpanded = true;
     hideCollapsedPrompt();
+    resetChatCollapseTimer();
   }
 }
 
@@ -256,6 +273,15 @@ function restorePlaceholder() {
 
 // Navigation
 function setupNavigation() {
+  // V2 Navigation: .nav-btn buttons in top-nav
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      switchView(btn.dataset.view);
+    });
+  });
+  
+  // V1 Fallback: .nav-item links (for backwards compatibility)
   document.querySelectorAll('.nav-item').forEach(item => {
     item.addEventListener('click', (e) => {
       e.preventDefault();
@@ -265,10 +291,37 @@ function setupNavigation() {
 }
 
 function switchView(view) {
+  const navButtons = document.querySelectorAll('.nav-btn');
+  const currentActiveBtn = document.querySelector('.nav-btn.active');
+  const newActiveBtn = document.querySelector(`.nav-btn[data-view="${view}"]`);
+  
+  // If clicking the same view or no buttons found, just update without animation
+  if (!currentActiveBtn || !newActiveBtn || currentActiveBtn === newActiveBtn) {
+    navButtons.forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.view === view);
+    });
+    updateViewContent(view);
+    return;
+  }
+  
+  // Staggered animation: collapse old button first
+  currentActiveBtn.classList.remove('active');
+  
+  // After collapse animation completes (300ms), expand new button
+  setTimeout(() => {
+    newActiveBtn.classList.add('active');
+  }, 300);
+  
+  // Update V1 nav items (fallback) - immediate
   document.querySelectorAll('.nav-item').forEach(item => {
     item.classList.toggle('active', item.dataset.view === view);
   });
   
+  // Update view content immediately
+  updateViewContent(view);
+}
+
+function updateViewContent(view) {
   document.querySelectorAll('.view-content').forEach(content => {
     content.classList.add('hidden');
   });
@@ -283,13 +336,11 @@ function switchView(view) {
 function refreshCurrentView() {
   switch (currentView) {
     case 'dashboard': 
-      if (currentEventId) loadDashboard(); 
+      if (currentEventId) loadDashboardV2(); 
       break;
-    case 'events': loadEventsList(); break;
-    case 'vendors': loadVendors(); break;
-    case 'payments': loadPayments(); break;
-    case 'tasks': loadTasks(); break;
-    case 'calendar': loadCalendar(); break;
+    case 'payments': loadPaymentsV2(); break;
+    case 'tasks': loadTasksV2(); break;
+    case 'calendar': loadCalendarV2(); break;
   }
 }
 
@@ -300,7 +351,7 @@ async function loadEvents() {
   const welcomeState = document.getElementById('welcomeState');
   const dashboardContent = document.getElementById('dashboardContent');
   const selector = document.getElementById('eventSelector');
-  const sidebarSelector = document.getElementById('sidebarEventSelector');
+  const eventTitleEl = document.getElementById('currentEventTitle');
   
   try {
     const response = await fetch(`${API_BASE}/api/events`);
@@ -312,15 +363,14 @@ async function loadEvents() {
       // Show welcome state, hide dashboard content
       if (welcomeState) welcomeState.style.display = 'flex';
       if (dashboardContent) dashboardContent.style.display = 'none';
-      if (sidebarSelector) sidebarSelector.style.display = 'none';
       selector.innerHTML = '<option value="">No events yet</option>';
+      if (eventTitleEl) eventTitleEl.textContent = 'Create Your First Event';
       currentEventId = null;
       currentEventType = null;
     } else {
       // Hide welcome state, show dashboard content
       if (welcomeState) welcomeState.style.display = 'none';
       if (dashboardContent) dashboardContent.style.display = 'block';
-      if (sidebarSelector) sidebarSelector.style.display = 'flex';
       
       allEvents.forEach(event => {
         const option = document.createElement('option');
@@ -337,7 +387,12 @@ async function loadEvents() {
         currentEventType = allEvents[0].event_type;
       }
       selector.value = currentEventId;
-      loadDashboard();
+      
+      // Update event title
+      updateEventTitle();
+      
+      // Load dashboard with V2 function
+      loadDashboardV2();
     }
     
     // Only add event listener once
@@ -347,18 +402,32 @@ async function loadEvents() {
         if (selected) {
           currentEventId = selected.id;
           currentEventType = selected.event_type;
+          updateEventTitle();
           refreshCurrentView();
+          updateEditButtonVisibility();
         }
       });
       eventSelectorInitialized = true;
     }
+    
+    // Update edit button visibility
+    updateEditButtonVisibility();
   } catch (error) {
     console.error('Failed to load events:', error);
     // Show welcome state on error as fallback
     if (welcomeState) welcomeState.style.display = 'flex';
     if (dashboardContent) dashboardContent.style.display = 'none';
-    if (sidebarSelector) sidebarSelector.style.display = 'none';
     showToast('Failed to load events', 'error');
+  }
+}
+
+function updateEventTitle() {
+  const eventTitleEl = document.getElementById('currentEventTitle');
+  if (!eventTitleEl || !currentEventId) return;
+  
+  const currentEvent = allEvents.find(e => e.id === currentEventId);
+  if (currentEvent) {
+    eventTitleEl.textContent = currentEvent.name;
   }
 }
 
@@ -411,8 +480,9 @@ function renderUpcomingItems(payments, calendar) {
   
   payments.forEach(p => {
     if (p.due_date && !p.paid_date) {
+      const displayTitle = p.vendor_name || p.description || 'Payment due';
       items.push({
-        title: p.notes?.split(';')[0] || 'Payment due',
+        title: displayTitle,
         type: 'payment',
         date: new Date(p.due_date)
       });
@@ -459,18 +529,21 @@ function renderRecentPayments(payments) {
     return;
   }
   
-  container.innerHTML = payments.map((p, i) => `
+  container.innerHTML = payments.map((p, i) => {
+    const displayName = p.vendor_name || p.description || 'Payment';
+    const amount = parseFloat(p.amount_paid || p.amount || 0);
+    return `
     <div class="item-row">
       <div class="item-icon ${COLORS[i % COLORS.length]}">
         <i class="fas fa-dollar-sign"></i>
       </div>
       <div class="item-content">
-        <div class="item-title">$${formatNumber(parseFloat(p.amount))}</div>
-        <div class="item-subtitle">${p.paid_date ? formatShortDate(new Date(p.paid_date)) : 'Pending'}</div>
+        <div class="item-title">${escapeHtml(displayName)}</div>
+        <div class="item-subtitle">${p.paid_date ? formatShortDate(new Date(p.paid_date)) : 'Pending'} · $${formatNumber(amount)}</div>
       </div>
       ${p.paid_date ? '<span class="tag tag-success">Paid</span>' : '<span class="tag tag-warning">Due</span>'}
     </div>
-  `).join('');
+  `;}).join('');
 }
 
 function renderOpenTasks(tasks) {
@@ -848,7 +921,6 @@ async function submitCapture() {
     return;
   }
   
-  // Keep chat expanded during conversation
   expandChat();
   resetChatCollapseTimer();
   
@@ -856,10 +928,21 @@ async function submitCapture() {
   input.value = '';
   clearPlaceholder();
   
-  // Track user message in conversation history
   addToConversationHistory('user', text);
   
-  showTypingIndicator();
+  showTypingIndicator('Got it, let me process that...');
+  
+  setTimeout(() => {
+    if (isAITyping) updateTypingStatus('Analyzing your request...');
+  }, 3000);
+  
+  setTimeout(() => {
+    if (isAITyping) updateTypingStatus('Processing details...');
+  }, 6000);
+  
+  setTimeout(() => {
+    if (isAITyping) updateTypingStatus('Almost there...');
+  }, 10000);
   
   try {
     const response = await fetch(`${API_BASE}/api/events/${currentEventId}/capture/extract`, {
@@ -953,23 +1036,17 @@ function showExtractionWithMessage(result) {
   html += `<div class="assistant-message">${result.assistant_message}</div>`;
   
   if (result.needs_confirmation) {
-    html += '<div class="extraction-preview" style="margin-top: 12px;">';
+    html += '<ul class="extraction-list">';
     for (const [key, value] of Object.entries(result.data)) {
       if (value !== null && value !== undefined && value !== '') {
         const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-        html += `<div class="extraction-field">
-          <span class="extraction-label">${label}</span>
-          <span class="extraction-value">${value}</span>
-        </div>`;
+        html += `<li><strong>${label}:</strong> ${value}</li>`;
       }
     }
-    html += '</div>';
+    html += '</ul>';
     
     if (result.follow_up_question) {
-      html += `<div class="follow-up-question">
-        <i class="fas fa-question-circle"></i>
-        <span>${result.follow_up_question}</span>
-      </div>`;
+      html += `<div class="follow-up-question">${result.follow_up_question}</div>`;
     }
     
     html += `<div class="confirm-actions">
@@ -1112,26 +1189,19 @@ function showQueryResults(queryResults) {
 
 function showExtractionResultWithFollowUp(result) {
   let html = `<div class="extraction-with-followup">`;
-  html += `<div style="margin-bottom: 12px;">Got it! Here's what I extracted:</div>`;
-  html += '<div class="extraction-preview">';
+  html += `<div style="margin-bottom: 8px;">Got it! Here's what I extracted:</div>`;
+  html += '<ul class="extraction-list">';
   
   for (const [key, value] of Object.entries(result.data)) {
     if (value !== null && value !== undefined && value !== '') {
       const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-      html += `<div class="extraction-field">
-        <span class="extraction-label">${label}</span>
-        <span class="extraction-value">${value}</span>
-      </div>`;
+      html += `<li><strong>${label}:</strong> ${value}</li>`;
     }
   }
   
-  html += '</div>';
+  html += '</ul>';
   
-  // Show the follow-up question
-  html += `<div class="follow-up-question">
-    <i class="fas fa-question-circle"></i>
-    <span>${result.follow_up_question}</span>
-  </div>`;
+  html += `<div class="follow-up-question">${result.follow_up_question}</div>`;
   
   html += `<div class="confirm-actions">
     <button class="btn btn-secondary btn-sm" onclick="cancelExtraction()">Cancel</button>
@@ -1147,20 +1217,16 @@ function renderSubEventUpdatePreview(result) {
   const action = data.action || 'update';
   
   let actionDescription = '';
-  let iconClass = '';
   
   switch (action) {
     case 'add':
       actionDescription = `Add new sub-event "${data.new_name || 'New Sub-Event'}"`;
-      iconClass = 'fa-plus-circle';
       break;
     case 'cancel':
       actionDescription = `Cancel sub-event "${data.sub_event_name}"`;
-      iconClass = 'fa-times-circle';
       break;
     case 'reschedule':
       actionDescription = `Reschedule "${data.sub_event_name}"`;
-      iconClass = 'fa-clock';
       break;
     case 'update':
       if (data.new_name) {
@@ -1168,49 +1234,28 @@ function renderSubEventUpdatePreview(result) {
       } else {
         actionDescription = `Update "${data.sub_event_name}"`;
       }
-      iconClass = 'fa-edit';
       break;
     default:
       actionDescription = `Update sub-event`;
-      iconClass = 'fa-edit';
   }
   
-  let html = `<div class="extraction-header">
-    <i class="fas ${iconClass}" style="color: var(--primary);"></i>
-    <span>${actionDescription}</span>
-  </div>`;
-  
-  html += '<div class="extraction-preview">';
+  let html = `<div style="margin-bottom: 8px;">${actionDescription}</div>`;
+  html += '<ul class="extraction-list">';
   
   if (data.new_date) {
-    html += `<div class="extraction-field">
-      <span class="extraction-label">New Date</span>
-      <span class="extraction-value">${formatShortDate(new Date(data.new_date))}</span>
-    </div>`;
+    html += `<li><strong>New Date:</strong> ${formatShortDate(new Date(data.new_date))}</li>`;
   }
-  
   if (data.new_start_time) {
-    html += `<div class="extraction-field">
-      <span class="extraction-label">Start Time</span>
-      <span class="extraction-value">${formatTime(data.new_start_time)}</span>
-    </div>`;
+    html += `<li><strong>Start Time:</strong> ${formatTime(data.new_start_time)}</li>`;
   }
-  
   if (data.new_end_time) {
-    html += `<div class="extraction-field">
-      <span class="extraction-label">End Time</span>
-      <span class="extraction-value">${formatTime(data.new_end_time)}</span>
-    </div>`;
+    html += `<li><strong>End Time:</strong> ${formatTime(data.new_end_time)}</li>`;
   }
-  
   if (data.new_location) {
-    html += `<div class="extraction-field">
-      <span class="extraction-label">Location</span>
-      <span class="extraction-value">${escapeHtml(data.new_location)}</span>
-    </div>`;
+    html += `<li><strong>Location:</strong> ${escapeHtml(data.new_location)}</li>`;
   }
   
-  html += '</div>';
+  html += '</ul>';
   
   const confirmText = action === 'cancel' ? 'Confirm Cancel' : 'Confirm';
   const confirmClass = action === 'cancel' ? 'btn-danger' : 'btn-primary';
@@ -1226,23 +1271,16 @@ function renderSubEventUpdatePreview(result) {
 function renderEventUpdatePreview(result) {
   const data = result.data;
   
-  let html = `<div class="extraction-header">
-    <i class="fas fa-calendar-alt" style="color: var(--primary);"></i>
-    <span>Update Event Details</span>
-  </div>`;
-  
-  html += '<div class="extraction-preview">';
+  let html = `<div style="margin-bottom: 8px;">Update Event Details:</div>`;
+  html += '<ul class="extraction-list">';
   
   for (const [key, value] of Object.entries(data)) {
     if (value != null && value !== '') {
-      html += `<div class="extraction-field">
-        <span class="extraction-label">${formatLabel(key)}</span>
-        <span class="extraction-value">${formatValue(key, value)}</span>
-      </div>`;
+      html += `<li><strong>${formatLabel(key)}:</strong> ${formatValue(key, value)}</li>`;
     }
   }
   
-  html += '</div>';
+  html += '</ul>';
   
   html += `<div class="confirm-actions">
     <button class="btn btn-secondary btn-sm" onclick="cancelExtraction()">Cancel</button>
@@ -1254,20 +1292,17 @@ function renderEventUpdatePreview(result) {
 
 function renderStandardExtractionPreview(result) {
   let html = `<div style="margin-bottom: 8px;">Got it! Here's what I found:</div>`;
-  html += '<div class="extraction-preview">';
+  html += '<ul class="extraction-list">';
   
   for (const [key, value] of Object.entries(result.data)) {
     if (value != null && value !== '') {
-      html += `<div class="extraction-field">
-        <span class="extraction-label">${formatLabel(key)}</span>
-        <span class="extraction-value">${formatValue(key, value)}</span>
-      </div>`;
+      html += `<li><strong>${formatLabel(key)}:</strong> ${formatValue(key, value)}</li>`;
     }
   }
-  html += '</div>';
+  html += '</ul>';
   
   if (result.missing_fields?.length > 0) {
-    html += `<div style="margin-top: 8px; font-size: 0.8rem; color: var(--warning);">
+    html += `<div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.8;">
       Missing: ${result.missing_fields.join(', ')}
     </div>`;
   }
@@ -1283,6 +1318,8 @@ function renderStandardExtractionPreview(result) {
 async function confirmExtraction() {
   if (!pendingExtraction) return;
   
+  showTypingIndicator('Saving...');
+  
   try {
     const response = await fetch(`${API_BASE}/api/events/${currentEventId}/capture/confirm`, {
       method: 'POST',
@@ -1296,16 +1333,18 @@ async function confirmExtraction() {
       })
     });
     
+    hideTypingIndicator();
     const result = await response.json();
     
     if (result.success) {
-      addMessage(`<i class="fas fa-check-circle" style="color: var(--success);"></i> ${result.message}`, 'ai', true);
+      addMessage(`Done! ${result.message}`, 'ai');
       showToast(result.message, 'success');
       refreshCurrentView();
     } else {
-      addMessage(`<i class="fas fa-times-circle" style="color: var(--danger);"></i> ${result.error || 'Failed to save'}`, 'ai', true);
+      addMessage(`Oops! ${result.error || 'Failed to save'}`, 'ai');
     }
   } catch (error) {
+    hideTypingIndicator();
     addMessage('Failed to save. Please try again.', 'ai');
     console.error('Confirm error:', error);
   }
@@ -1325,25 +1364,43 @@ function addMessage(content, type, isHtml = false) {
   message.innerHTML = isHtml ? content : escapeHtml(content);
   container.appendChild(message);
   container.scrollTop = container.scrollHeight;
+  
 }
 
-function showTypingIndicator() {
+function showTypingIndicator(message = null) {
   isAITyping = true;
-  clearChatCollapseTimer(); // Don't collapse while typing
+  clearChatCollapseTimer();
   
   const container = document.getElementById('captureMessages');
-  const indicator = document.createElement('div');
-  indicator.className = 'message message-ai';
-  indicator.id = 'typingIndicator';
-  indicator.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
-  container.appendChild(indicator);
+  let indicator = document.getElementById('typingIndicator');
+  
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.className = 'message message-ai typing-message';
+    indicator.id = 'typingIndicator';
+    container.appendChild(indicator);
+  }
+  
+  if (message) {
+    indicator.innerHTML = `<span class="typing-status">${message}</span>`;
+  } else {
+    indicator.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+  }
+  
   container.scrollTop = container.scrollHeight;
+}
+
+function updateTypingStatus(message) {
+  const indicator = document.getElementById('typingIndicator');
+  if (indicator) {
+    indicator.innerHTML = `<span class="typing-status">${message}</span>`;
+  }
 }
 
 function hideTypingIndicator() {
   isAITyping = false;
   document.getElementById('typingIndicator')?.remove();
-  resetChatCollapseTimer(); // Restart collapse timer after response
+  resetChatCollapseTimer();
 }
 
 // Modal
@@ -1541,6 +1598,261 @@ async function createEvent(e) {
   }
 }
 
+// Edit Event Modal Functions
+function updateEditButtonVisibility() {
+  const editBtn = document.getElementById('editEventBtn');
+  if (editBtn) {
+    editBtn.style.display = currentEventId ? 'flex' : 'none';
+  }
+}
+
+let editSubEventIndex = 0;
+let originalSubEvents = [];
+let subEventsToDelete = [];
+
+async function showEditEventModal() {
+  if (!currentEventId) {
+    showToast('Please select an event first', 'error');
+    return;
+  }
+  
+  try {
+    const eventResponse = await fetch(`${API_BASE}/api/events/${currentEventId}`);
+    if (!eventResponse.ok) throw new Error('Failed to fetch event');
+    const event = await eventResponse.json();
+    
+    document.getElementById('editEventName').value = event.name || '';
+    document.getElementById('editEventType').value = event.event_type || 'wedding';
+    document.getElementById('editEventStartDate').value = event.start_date || '';
+    document.getElementById('editEventEndDate').value = event.end_date || '';
+    document.getElementById('editEventLocation').value = event.location || '';
+    document.getElementById('editEventLocationCity').value = event.location_city || '';
+    
+    const subEventsResponse = await fetch(`${API_BASE}/api/events/${currentEventId}/sub-events`);
+    const subEvents = subEventsResponse.ok ? await subEventsResponse.json() : [];
+    originalSubEvents = subEvents;
+    subEventsToDelete = [];
+    
+    const container = document.getElementById('editSubEventsList');
+    container.innerHTML = '';
+    editSubEventIndex = 0;
+    
+    if (subEvents.length === 0) {
+      container.innerHTML = '<p class="text-muted" style="text-align: center; padding: var(--space-4);">No sub-events yet. Click "Add New" to create one.</p>';
+    } else {
+      subEvents.forEach((subEvent, idx) => {
+        container.innerHTML += createEditSubEventRowHtml(idx, subEvent);
+        editSubEventIndex = idx + 1;
+      });
+    }
+    
+    document.getElementById('editEventModal').classList.add('show');
+  } catch (error) {
+    console.error('Failed to load event for editing:', error);
+    showToast('Failed to load event details', 'error');
+  }
+}
+
+function hideEditEventModal() {
+  document.getElementById('editEventModal').classList.remove('show');
+  subEventsToDelete = [];
+}
+
+function createEditSubEventRowHtml(index, subEvent = null) {
+  const id = subEvent ? subEvent.id : '';
+  const name = subEvent ? (subEvent.name || '') : '';
+  const date = subEvent ? (subEvent.date || '') : '';
+  const startTime = subEvent ? (subEvent.start_time || '') : '';
+  const endTime = subEvent ? (subEvent.end_time || '') : '';
+  const isExisting = !!subEvent?.id;
+  
+  return `
+    <div class="sub-event-row" data-index="${index}" data-id="${id}" data-is-new="${!isExisting}">
+      <div class="input-row">
+        <div class="input-group flex-1">
+          <label>Name</label>
+          <input type="text" class="input edit-sub-event-name" value="${escapeHtml(name)}" placeholder="e.g., Mehndi Night">
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm sub-event-remove" onclick="removeEditSubEventRow(this)" title="Remove sub-event">
+          <i class="fas fa-trash"></i>
+        </button>
+      </div>
+      <div class="input-row">
+        <div class="input-group flex-1">
+          <label>Date</label>
+          <input type="date" class="input edit-sub-event-date" value="${date}">
+        </div>
+        <div class="input-group flex-1">
+          <label>Start Time</label>
+          <input type="time" class="input edit-sub-event-start-time" value="${startTime}">
+        </div>
+        <div class="input-group flex-1">
+          <label>End Time</label>
+          <input type="time" class="input edit-sub-event-end-time" value="${endTime}">
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function addEditSubEventRow() {
+  const container = document.getElementById('editSubEventsList');
+  const emptyMsg = container.querySelector('.text-muted');
+  if (emptyMsg) emptyMsg.remove();
+  
+  container.innerHTML += createEditSubEventRowHtml(editSubEventIndex);
+  editSubEventIndex++;
+}
+
+function removeEditSubEventRow(button) {
+  const row = button.closest('.sub-event-row');
+  const subEventId = row.dataset.id;
+  const isNew = row.dataset.isNew === 'true';
+  
+  if (subEventId && !isNew) {
+    subEventsToDelete.push(subEventId);
+  }
+  
+  row.remove();
+  
+  const container = document.getElementById('editSubEventsList');
+  if (container.children.length === 0) {
+    container.innerHTML = '<p class="text-muted" style="text-align: center; padding: var(--space-4);">No sub-events. Click "Add New" to create one.</p>';
+  }
+}
+
+async function saveEventChanges(e) {
+  e.preventDefault();
+  
+  try {
+    const eventData = {
+      name: document.getElementById('editEventName').value.trim(),
+      event_type: document.getElementById('editEventType').value,
+      start_date: document.getElementById('editEventStartDate').value || null,
+      end_date: document.getElementById('editEventEndDate').value || null,
+      location: document.getElementById('editEventLocation').value.trim() || null,
+      location_city: document.getElementById('editEventLocationCity').value.trim() || null,
+    };
+    
+    if (!eventData.name) {
+      showToast('Event name is required', 'error');
+      return;
+    }
+    
+    const eventResponse = await fetch(`${API_BASE}/api/events/${currentEventId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(eventData),
+    });
+    
+    if (!eventResponse.ok) {
+      throw new Error('Failed to update event');
+    }
+    
+    for (const subEventId of subEventsToDelete) {
+      const deleteResponse = await fetch(`${API_BASE}/api/events/${currentEventId}/sub-events/${subEventId}`, {
+        method: 'DELETE',
+      });
+      if (!deleteResponse.ok) {
+        console.warn(`Failed to delete sub-event ${subEventId}`);
+      }
+    }
+    
+    const subEventRows = document.querySelectorAll('#editSubEventsList .sub-event-row');
+    for (const row of subEventRows) {
+      const name = row.querySelector('.edit-sub-event-name').value.trim();
+      const date = row.querySelector('.edit-sub-event-date').value || null;
+      const startTime = row.querySelector('.edit-sub-event-start-time').value || null;
+      const endTime = row.querySelector('.edit-sub-event-end-time').value || null;
+      const subEventId = row.dataset.id;
+      const isNew = row.dataset.isNew === 'true';
+      
+      if (!name) continue;
+      
+      if (isNew) {
+        if (!date) {
+          showToast(`Sub-event "${name}" requires a date`, 'error');
+          return;
+        }
+        const subEventData = { name, date, start_time: startTime, end_time: endTime };
+        await fetch(`${API_BASE}/api/events/${currentEventId}/sub-events`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(subEventData),
+        });
+      } else if (subEventId) {
+        const subEventData = { name };
+        if (date) subEventData.date = date;
+        if (startTime) subEventData.start_time = startTime;
+        if (endTime) subEventData.end_time = endTime;
+        
+        await fetch(`${API_BASE}/api/events/${currentEventId}/sub-events/${subEventId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(subEventData),
+        });
+      }
+    }
+    
+    showToast('Event updated successfully!', 'success');
+    hideEditEventModal();
+    await loadEvents();
+    refreshCurrentView();
+  } catch (error) {
+    console.error('Failed to save event changes:', error);
+    showToast('Failed to save changes: ' + error.message, 'error');
+  }
+}
+
+// Feedback System
+function showFeedbackPopup() {
+  document.getElementById('feedbackPopup').classList.add('show');
+  document.getElementById('feedbackText').focus();
+}
+
+function hideFeedbackPopup() {
+  document.getElementById('feedbackPopup').classList.remove('show');
+  document.getElementById('feedbackText').value = '';
+}
+
+async function submitFeedback() {
+  const feedbackText = document.getElementById('feedbackText').value.trim();
+  
+  if (!feedbackText) {
+    showToast('Please describe the issue', 'error');
+    return;
+  }
+  
+  const lastUserMsg = conversationHistory.filter(c => c.role === 'user').slice(-1)[0];
+  const lastAiMsg = conversationHistory.filter(c => c.role === 'assistant').slice(-1)[0];
+  
+  const feedbackData = {
+    event_id: currentEventId,
+    user_feedback: feedbackText,
+    conversation_history: JSON.stringify(conversationHistory),
+    last_user_message: lastUserMsg?.content || null,
+    last_llm_response: lastAiMsg?.content || null,
+  };
+  
+  try {
+    const response = await fetch(`${API_BASE}/api/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(feedbackData),
+    });
+    
+    if (response.ok) {
+      showToast('Feedback submitted. Thank you!', 'success');
+      hideFeedbackPopup();
+    } else {
+      showToast('Failed to submit feedback', 'error');
+    }
+  } catch (error) {
+    console.error('Feedback submission error:', error);
+    showToast('Failed to submit feedback', 'error');
+  }
+}
+
 // Toast
 function showToast(message, type = 'success') {
   const toast = document.createElement('div');
@@ -1617,4 +1929,342 @@ function formatDateRange(startDate, endDate) {
   if (!endDate) return formatShortDate(start);
   const end = new Date(endDate);
   return `${formatShortDate(start)} - ${formatShortDate(end)}`;
+}
+
+// ============================================
+// UI V2 FUNCTIONS
+// ============================================
+
+async function loadDashboardV2() {
+  if (!currentEventId) return;
+  
+  try {
+    const [dashResponse, tasksResponse, calendarResponse, paymentsResponse, vendorsResponse, eventResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/events/${currentEventId}/dashboard`),
+      fetch(`${API_BASE}/api/events/${currentEventId}/tasks`),
+      fetch(`${API_BASE}/api/events/${currentEventId}/calendar`),
+      fetch(`${API_BASE}/api/events/${currentEventId}/payments`),
+      fetch(`${API_BASE}/api/events/${currentEventId}/vendors`),
+      fetch(`${API_BASE}/api/events/${currentEventId}`)
+    ]);
+    
+    const dashboard = await dashResponse.json();
+    const tasks = await tasksResponse.json();
+    const calendar = await calendarResponse.json();
+    const payments = await paymentsResponse.json();
+    const vendors = await vendorsResponse.json();
+    const event = await eventResponse.json();
+    
+    // Subtle Stats
+    const subeventsCount = event.sub_events?.length || 0;
+    const vendorsCount = vendors.length;
+    const totalPaid = parseFloat(dashboard.financial_summary?.total_paid || 0);
+    const totalPending = parseFloat(dashboard.financial_summary?.total_upcoming || 0);
+    
+    const statSubevents = document.getElementById('stat-subevents');
+    const statVendors = document.getElementById('stat-vendors');
+    const statPaid = document.getElementById('stat-paid');
+    const statPending = document.getElementById('stat-pending');
+    
+    if (statSubevents) statSubevents.textContent = subeventsCount;
+    if (statVendors) statVendors.textContent = vendorsCount;
+    if (statPaid) statPaid.textContent = `$${formatNumber(totalPaid)}`;
+    if (statPending) statPending.textContent = `$${formatNumber(totalPending)}`;
+    
+    // 3-Column Layout
+    renderDashboardTasks(tasks);
+    renderDashboardPayments(payments);
+    renderDashboardSchedule(calendar, event.sub_events || []);
+    
+  } catch (error) {
+    console.error('Failed to load dashboard V2:', error);
+  }
+}
+
+function renderDashboardTasks(tasks) {
+  const container = document.getElementById('dashboardTasks');
+  if (!container) return;
+  
+  const pendingTasks = tasks.filter(t => t.status !== 'completed').slice(0, 8);
+  
+  if (pendingTasks.length === 0) {
+    container.innerHTML = '<div class="task-item-simple"><span class="task-checkbox completed"></span><span class="task-text completed">All tasks complete!</span></div>';
+    return;
+  }
+  
+  container.innerHTML = pendingTasks.map(task => `
+    <div class="task-item-simple">
+      <span class="task-checkbox"></span>
+      <div>
+        <span class="task-text">${escapeHtml(task.title)}</span>
+        ${task.due_date ? `<div class="task-due">Due ${formatShortDate(new Date(task.due_date))}</div>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderDashboardPayments(payments) {
+  const container = document.getElementById('dashboardPayments');
+  if (!container) return;
+  
+  const recentPayments = payments.slice(0, 8);
+  
+  if (recentPayments.length === 0) {
+    container.innerHTML = '<div class="payment-item-simple"><span class="payment-vendor">No payments yet</span></div>';
+    return;
+  }
+  
+  container.innerHTML = recentPayments.map(p => {
+    const displayName = p.vendor_name || p.description || 'Payment';
+    const amount = parseFloat(p.amount_paid || p.amount || 0);
+    return `
+    <div class="payment-item-simple">
+      <span class="payment-vendor">${escapeHtml(displayName)}</span>
+      <span class="payment-amount">$${formatNumber(amount)}</span>
+    </div>
+  `;}).join('');
+}
+
+function renderDashboardSchedule(calendar, subEvents) {
+  const container = document.getElementById('dashboardSchedule');
+  if (!container) return;
+  
+  const items = [];
+  
+  // Add sub-events
+  subEvents.forEach(se => {
+    if (se.date) {
+      items.push({
+        name: se.name,
+        date: new Date(se.date),
+        type: 'subevent'
+      });
+    }
+  });
+  
+  // Add calendar events
+  calendar.forEach(c => {
+    if (c.event_date) {
+      items.push({
+        name: c.title,
+        date: new Date(c.event_date),
+        type: 'calendar'
+      });
+    }
+  });
+  
+  items.sort((a, b) => a.date - b.date);
+  const upcoming = items.filter(i => i.date >= new Date()).slice(0, 6);
+  
+  if (upcoming.length === 0) {
+    container.innerHTML = '<div class="schedule-item-simple"><span class="schedule-name">No upcoming events</span></div>';
+    return;
+  }
+  
+  container.innerHTML = upcoming.map(item => `
+    <div class="schedule-item-simple">
+      <span class="schedule-name">${escapeHtml(item.name)}</span>
+      <span class="schedule-date">${formatShortDate(item.date)}</span>
+    </div>
+  `).join('');
+}
+
+async function loadPaymentsV2() {
+  if (!currentEventId) return;
+  
+  try {
+    const [paymentsResponse, vendorsResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/events/${currentEventId}/payments`),
+      fetch(`${API_BASE}/api/events/${currentEventId}/vendors`)
+    ]);
+    
+    const payments = await paymentsResponse.json();
+    const vendors = await vendorsResponse.json();
+    
+    // Render vendors
+    const vendorsContainer = document.getElementById('vendorsList');
+    if (vendorsContainer) {
+      if (vendors.length === 0) {
+        vendorsContainer.innerHTML = '<div class="empty-state-v2"><p>No vendors yet</p></div>';
+      } else {
+        vendorsContainer.innerHTML = vendors.map((v, i) => `
+          <div class="vendor-item-v2">
+            <div class="vendor-avatar" style="background: ${['#A0C9CB', '#FF6037', '#733635', '#F5F4ED'][i % 4]}">
+              ${v.name.charAt(0).toUpperCase()}
+            </div>
+            <div class="vendor-info">
+              <div class="vendor-name">${escapeHtml(v.name)}</div>
+              <div class="vendor-category">${escapeHtml(v.category || 'Vendor')}</div>
+            </div>
+          </div>
+        `).join('');
+      }
+    }
+    
+    // Split payments into completed and pending
+    const completedPayments = payments.filter(p => p.paid_date);
+    const pendingPayments = payments.filter(p => !p.paid_date && p.due_date);
+    
+    // Render completed payments
+    const paymentsContainer = document.getElementById('paymentsList');
+    if (paymentsContainer) {
+      if (completedPayments.length === 0) {
+        paymentsContainer.innerHTML = '<div class="empty-state-v2"><p>No payments recorded</p></div>';
+      } else {
+        paymentsContainer.innerHTML = completedPayments.map(p => {
+          const displayName = p.vendor_name || p.description || 'Payment';
+          const amount = parseFloat(p.amount_paid || p.amount || 0);
+          return `
+          <div class="payment-item-v2">
+            <div class="payment-details">
+              <div class="payment-vendor-name">${escapeHtml(displayName)}</div>
+              <div class="payment-date">${p.paid_date ? formatShortDate(new Date(p.paid_date)) : ''}</div>
+            </div>
+            <div class="payment-amount-v2">$${formatNumber(amount)}</div>
+          </div>
+        `;}).join('');
+      }
+    }
+    
+    // Render pending payments
+    const pendingContainer = document.getElementById('pendingPaymentsList');
+    if (pendingContainer) {
+      if (pendingPayments.length === 0) {
+        pendingContainer.innerHTML = '<div class="empty-state-v2"><p>No pending payments</p></div>';
+      } else {
+        pendingContainer.innerHTML = pendingPayments.map(p => {
+          const displayName = p.vendor_name || p.description || 'Payment due';
+          const amount = parseFloat(p.amount || 0);
+          return `
+          <div class="payment-item-v2">
+            <div class="payment-details">
+              <div class="payment-vendor-name">${escapeHtml(displayName)}</div>
+              <div class="payment-date">Due ${formatShortDate(new Date(p.due_date))}</div>
+            </div>
+            <div class="payment-amount-v2">$${formatNumber(amount)}</div>
+          </div>
+        `;}).join('');
+      }
+    }
+    
+  } catch (error) {
+    console.error('Failed to load payments V2:', error);
+  }
+}
+
+async function loadTasksV2() {
+  if (!currentEventId) return;
+  
+  try {
+    const response = await fetch(`${API_BASE}/api/events/${currentEventId}/tasks`);
+    const tasks = await response.json();
+    
+    const container = document.getElementById('allTasksList');
+    if (!container) return;
+    
+    if (tasks.length === 0) {
+      container.innerHTML = '<div class="empty-state-v2"><p>No tasks yet</p></div>';
+      return;
+    }
+    
+    // Sort: pending first, then by priority
+    const priorityOrder = { high: 0, medium: 1, low: 2 };
+    const sortedTasks = [...tasks].sort((a, b) => {
+      if (a.status === 'completed' && b.status !== 'completed') return 1;
+      if (a.status !== 'completed' && b.status === 'completed') return -1;
+      return (priorityOrder[a.priority] || 2) - (priorityOrder[b.priority] || 2);
+    });
+    
+    container.innerHTML = sortedTasks.map(task => `
+      <div class="task-item-full">
+        <span class="task-checkbox ${task.status === 'completed' ? 'completed' : ''}"></span>
+        <div class="task-content">
+          <div class="task-title ${task.status === 'completed' ? 'completed' : ''}">${escapeHtml(task.title)}</div>
+          <div class="task-meta">
+            ${task.priority ? `<span class="task-priority ${task.priority}">${task.priority}</span>` : ''}
+            ${task.due_date ? `<span>Due ${formatShortDate(new Date(task.due_date))}</span>` : ''}
+          </div>
+        </div>
+      </div>
+    `).join('');
+    
+  } catch (error) {
+    console.error('Failed to load tasks V2:', error);
+  }
+}
+
+async function loadCalendarV2() {
+  if (!currentEventId) return;
+  
+  try {
+    const [eventResponse, calendarResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/events/${currentEventId}`),
+      fetch(`${API_BASE}/api/events/${currentEventId}/calendar`)
+    ]);
+    
+    const event = await eventResponse.json();
+    const calendar = await calendarResponse.json();
+    
+    // Update event details card
+    const nameEl = document.getElementById('eventDetailsName');
+    const dateEl = document.getElementById('eventDetailsDate');
+    const locationEl = document.getElementById('eventDetailsLocation');
+    
+    if (nameEl) nameEl.textContent = event.name;
+    if (dateEl) dateEl.innerHTML = `<i class="fas fa-calendar"></i> ${formatDateRange(event.start_date, event.end_date)}`;
+    if (locationEl) locationEl.innerHTML = `<i class="fas fa-map-marker-alt"></i> ${escapeHtml(event.location || 'Location TBD')}`;
+    
+    // Render sub-events
+    const subEventsContainer = document.getElementById('calendarSubEventsList');
+    if (subEventsContainer) {
+      const subEvents = event.sub_events || [];
+      if (subEvents.length === 0) {
+        subEventsContainer.innerHTML = '<div class="empty-state-v2"><p>No sub-events yet</p></div>';
+      } else {
+        subEventsContainer.innerHTML = subEvents.map(se => `
+          <div class="subevent-item-v2">
+            <div class="subevent-name">${escapeHtml(se.name)}</div>
+            <div class="subevent-meta">
+              ${se.date ? `<span><i class="fas fa-calendar"></i> ${formatShortDate(new Date(se.date))}</span>` : ''}
+              ${se.start_time ? `<span><i class="fas fa-clock"></i> ${se.start_time}</span>` : ''}
+              ${se.location ? `<span><i class="fas fa-map-marker-alt"></i> ${escapeHtml(se.location)}</span>` : ''}
+            </div>
+          </div>
+        `).join('');
+      }
+    }
+    
+    // Render calendar events
+    const calendarContainer = document.getElementById('calendarList');
+    if (calendarContainer) {
+      if (calendar.length === 0) {
+        calendarContainer.innerHTML = '<div class="empty-state-v2"><p>No calendar events yet</p></div>';
+      } else {
+        // Sort by date
+        const sortedCalendar = [...calendar].sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
+        
+        calendarContainer.innerHTML = sortedCalendar.map(c => {
+          const date = new Date(c.event_date);
+          const day = date.getDate();
+          const month = date.toLocaleDateString('en-US', { month: 'short' });
+          
+          return `
+            <div class="calendar-item-v2">
+              <div class="calendar-date-badge">
+                <span class="calendar-date-day">${day}</span>
+                <span class="calendar-date-month">${month}</span>
+              </div>
+              <div class="calendar-event-info">
+                <div class="calendar-event-title">${escapeHtml(c.title)}</div>
+                <div class="calendar-event-time">${c.event_time || ''} ${c.location ? '· ' + escapeHtml(c.location) : ''}</div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+    }
+    
+  } catch (error) {
+    console.error('Failed to load calendar V2:', error);
+  }
 }
