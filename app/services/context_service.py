@@ -13,6 +13,7 @@ from app.models.vendor import Vendor
 from app.models.payment import Payment
 from app.models.task import Task
 from app.models.calendar_event import CalendarEvent
+from app.models.sub_event import SubEvent
 
 
 class ContextService:
@@ -170,6 +171,146 @@ class ContextService:
                 }
         
         return None
+    
+    async def get_full_context(
+        self,
+        event_id: str,
+        db: AsyncSession,
+    ) -> dict:
+        """Get full context including all data types for the event."""
+        context = {
+            "vendors": [],
+            "payments": [],
+            "tasks": [],
+            "sub_events": [],
+        }
+        
+        # Get vendors
+        vendors_result = await db.execute(
+            select(Vendor).where(Vendor.event_id == event_id)
+        )
+        vendors = vendors_result.scalars().all()
+        vendor_map = {}
+        for v in vendors:
+            vendor_map[v.id] = v.name
+            context["vendors"].append({
+                "id": v.id,
+                "name": v.name,
+                "category": v.category,
+            })
+        
+        # Get payments
+        payments_result = await db.execute(
+            select(Payment)
+            .where(Payment.event_id == event_id)
+            .order_by(Payment.created_at.desc())
+        )
+        payments = payments_result.scalars().all()
+        for p in payments:
+            vendor_name = vendor_map.get(p.vendor_id, "Unknown")
+            context["payments"].append({
+                "id": p.id,
+                "vendor_name": vendor_name,
+                "amount": float(p.amount) if p.amount else 0,
+                "paid_date": p.paid_date.isoformat() if p.paid_date else None,
+                "due_date": p.due_date.isoformat() if p.due_date else None,
+                "is_paid": p.paid_date is not None,
+            })
+        
+        # Get tasks
+        tasks_result = await db.execute(
+            select(Task)
+            .where(Task.event_id == event_id)
+            .order_by(Task.created_at.desc())
+        )
+        tasks = tasks_result.scalars().all()
+        for t in tasks:
+            context["tasks"].append({
+                "id": t.id,
+                "title": t.title,
+                "status": t.status.value if hasattr(t.status, 'value') else str(t.status),
+                "due_date": t.due_date.isoformat() if t.due_date else None,
+                "priority": t.priority.value if hasattr(t.priority, 'value') else str(t.priority),
+            })
+        
+        # Get sub-events
+        sub_events_result = await db.execute(
+            select(SubEvent)
+            .where(SubEvent.event_id == event_id)
+            .order_by(SubEvent.order)
+        )
+        sub_events = sub_events_result.scalars().all()
+        for se in sub_events:
+            context["sub_events"].append({
+                "id": se.id,
+                "name": se.name,
+                "date": se.date.isoformat() if se.date else None,
+                "start_time": se.start_time.isoformat() if se.start_time else None,
+                "end_time": se.end_time.isoformat() if se.end_time else None,
+                "location": se.location,
+            })
+        
+        return context
+    
+    def format_full_context_for_prompt(self, context: dict) -> str:
+        """Format full context as a string for LLM prompt injection."""
+        lines = ["=== CURRENT EVENT DATA ===\n"]
+        
+        # Payments section
+        payments = context.get("payments", [])
+        paid_payments = [p for p in payments if p.get("is_paid")]
+        unpaid_payments = [p for p in payments if not p.get("is_paid")]
+        
+        if paid_payments:
+            lines.append("COMPLETED PAYMENTS:")
+            for p in paid_payments[:10]:
+                lines.append(f"  - ${p['amount']:.2f} to {p['vendor_name']} (paid {p['paid_date']})")
+        else:
+            lines.append("COMPLETED PAYMENTS: None recorded yet")
+        
+        if unpaid_payments:
+            lines.append("\nPENDING PAYMENTS (scheduled but not yet paid):")
+            for p in unpaid_payments[:10]:
+                lines.append(f"  - ${p['amount']:.2f} to {p['vendor_name']} (due {p.get('due_date', 'TBD')})")
+        else:
+            lines.append("\nPENDING PAYMENTS: None scheduled")
+        
+        # Vendors section
+        vendors = context.get("vendors", [])
+        if vendors:
+            lines.append(f"\nVENDORS ({len(vendors)} total):")
+            for v in vendors[:10]:
+                lines.append(f"  - {v['name']} ({v.get('category', 'General')})")
+        else:
+            lines.append("\nVENDORS: None added yet")
+        
+        # Tasks section
+        tasks = context.get("tasks", [])
+        pending_tasks = [t for t in tasks if t.get("status") in ("PENDING", "IN_PROGRESS")]
+        if pending_tasks:
+            lines.append(f"\nOPEN TASKS ({len(pending_tasks)} pending):")
+            for t in pending_tasks[:10]:
+                due = f" (due {t['due_date']})" if t.get('due_date') else ""
+                lines.append(f"  - {t['title']}{due}")
+        else:
+            lines.append("\nOPEN TASKS: None")
+        
+        # Sub-events section
+        sub_events = context.get("sub_events", [])
+        if sub_events:
+            lines.append(f"\nSUB-EVENTS ({len(sub_events)} scheduled):")
+            for se in sub_events:
+                time_str = ""
+                if se.get("start_time"):
+                    time_str = f" at {se['start_time'][:5]}"
+                lines.append(f"  - SUB_EVENT_ID: {se['id']}")
+                lines.append(f"    {se['name']} on {se.get('date', 'TBD')}{time_str}")
+        else:
+            lines.append("\nSUB-EVENTS: None scheduled")
+        
+        lines.append("\n=== END OF DATA ===")
+        
+        return "\n".join(lines)
     
     def format_context_for_prompt(self, context: dict) -> str:
         """Format payment context as a string for LLM prompt injection."""

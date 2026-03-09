@@ -1,14 +1,15 @@
 import json
 from typing import Optional
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import select, func, desc, asc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai_log import AILog, AILogStatus
 from app.models.vendor import Vendor
 from app.models.payment import Payment
-from app.models.task import Task
+from app.models.task import Task, TaskStatus
 from app.models.calendar_event import CalendarEvent
 from app.models.event import Event
 from app.models.sub_event import SubEvent
@@ -37,6 +38,7 @@ class ExtractionService:
         event_id: str,
         db: AsyncSession,
         context: Optional[str] = None,
+        conversation_history: Optional[list[dict]] = None,
     ) -> tuple[dict, str]:
         """
         Extract intent and data from user input with optional context.
@@ -46,11 +48,16 @@ class ExtractionService:
             event_id: The event this extraction is for
             db: Database session
             context: Optional context string with existing records
+            conversation_history: Optional list of recent conversation messages
         
         Returns:
             Tuple of (extraction_result, log_id)
         """
-        result = await self.llm_service.extract_intent_and_data(user_input, context)
+        result = await self.llm_service.extract_intent_and_data(
+            user_input, 
+            context,
+            conversation_history
+        )
         
         ai_log = AILog(
             event_id=event_id,
@@ -99,6 +106,18 @@ class ExtractionService:
         try:
             record_id = None
             
+            # Handle DELETE action
+            if action == ActionType.DELETE and reference_id:
+                deleted_id = await self._delete_record(intent, reference_id, db)
+                if deleted_id:
+                    ai_log.status = AILogStatus.SUCCESS
+                    await db.commit()
+                    return True, f"Successfully deleted {intent.value}", deleted_id
+                else:
+                    ai_log.status = AILogStatus.ERROR
+                    await db.commit()
+                    return False, f"Record not found or could not be deleted", None
+            
             if intent == IntentType.PAYMENT:
                 if action == ActionType.UPDATE and reference_id:
                     created_id = await self._update_payment(reference_id, data, db)
@@ -107,8 +126,17 @@ class ExtractionService:
                     created_id = await self._create_payment(event_id, data, db)
                     message = "Successfully created payment"
             elif intent == IntentType.TASK:
-                created_id = await self._create_task(event_id, data, db)
-                message = "Successfully created task"
+                # Handle bulk task creation
+                if data.get("items") and isinstance(data["items"], list):
+                    created_ids = []
+                    for item in data["items"]:
+                        task_id = await self._create_task(event_id, item, db)
+                        created_ids.append(task_id)
+                    created_id = ",".join(created_ids)
+                    message = f"Successfully created {len(created_ids)} tasks"
+                else:
+                    created_id = await self._create_task(event_id, data, db)
+                    message = "Successfully created task"
             elif intent == IntentType.CALENDAR_EVENT:
                 created_id = await self._create_calendar_event(event_id, data, db)
                 message = "Successfully created calendar event"
@@ -146,6 +174,44 @@ class ExtractionService:
         ai_log.status = AILogStatus.REJECTED
         await db.commit()
         return True
+    
+    async def _delete_record(
+        self,
+        intent: IntentType,
+        record_id: str,
+        db: AsyncSession,
+    ) -> Optional[str]:
+        """
+        Delete a record based on intent type.
+        
+        Args:
+            intent: The type of record to delete
+            record_id: The ID of the record to delete
+            db: Database session
+            
+        Returns:
+            The deleted record ID if successful, None if not found
+        """
+        model_map = {
+            IntentType.PAYMENT: Payment,
+            IntentType.TASK: Task,
+            IntentType.VENDOR: Vendor,
+            IntentType.CALENDAR_EVENT: CalendarEvent,
+        }
+        
+        model = model_map.get(intent)
+        if not model:
+            return None
+        
+        result = await db.execute(select(model).where(model.id == record_id))
+        record = result.scalar_one_or_none()
+        
+        if not record:
+            return None
+        
+        await db.delete(record)
+        await db.commit()
+        return record_id
     
     async def _update_payment(
         self,
@@ -221,6 +287,138 @@ class ExtractionService:
         await db.refresh(payment)
         return payment.id
     
+    def _infer_vendor_category(self, vendor_name: str) -> str | None:
+        """Infer vendor category from common vendor type names."""
+        if not vendor_name:
+            return None
+        name_lower = vendor_name.lower()
+        category_map = {
+            # Photography
+            "photographer": "photography",
+            "photography": "photography",
+            "photo": "photography",
+            "candid": "photography",
+            # Videography
+            "videographer": "videography",
+            "videography": "videography",
+            "video": "videography",
+            "film": "videography",
+            "cinemat": "videography",
+            # Catering
+            "caterer": "catering",
+            "catering": "catering",
+            "food": "catering",
+            "chaat": "catering",
+            "halwai": "catering",
+            "cook": "catering",
+            # Florist
+            "florist": "florist",
+            "flowers": "florist",
+            "floral": "florist",
+            "garland": "florist",
+            "varmala": "florist",
+            "phool": "florist",
+            # Music & DJ
+            "dj": "music_dj",
+            "band": "music_dj",
+            "musician": "music_dj",
+            "dhol": "music_dj",
+            "orchestra": "music_dj",
+            "anchor": "music_dj",
+            "emcee": "music_dj",
+            "sangeet": "music_dj",
+            # Decor
+            "decorator": "decor",
+            "decor": "decor",
+            "mandap": "decor",
+            "stage": "decor",
+            "lighting": "decor",
+            # Makeup & Hair
+            "makeup": "makeup_hair",
+            "hair": "makeup_hair",
+            "mua": "makeup_hair",
+            "bridal look": "makeup_hair",
+            "stylist": "makeup_hair",
+            # Mehndi
+            "mehndi": "mehndi",
+            "henna": "mehndi",
+            "mehendi": "mehndi",
+            # Officiant
+            "officiant": "officiant",
+            "minister": "officiant",
+            "priest": "officiant",
+            "pastor": "officiant",
+            "rabbi": "officiant",
+            "pandit": "officiant",
+            "purohit": "officiant",
+            "pujari": "officiant",
+            # Transportation
+            "transportation": "transportation",
+            "limo": "transportation",
+            "doli": "transportation",
+            "palki": "transportation",
+            "ghodi": "transportation",
+            "baraat": "transportation",
+            # Rentals
+            "rental": "rentals",
+            "rentals": "rentals",
+            "tent": "rentals",
+            "shamiyana": "rentals",
+            "crockery": "rentals",
+            # Bakery
+            "baker": "bakery",
+            "bakery": "bakery",
+            "cake": "bakery",
+            "dessert": "bakery",
+            "mithai": "bakery",
+            "sweet": "bakery",
+            # Invitations
+            "invitation": "invitations",
+            "stationery": "invitations",
+            "card": "invitations",
+            # Venue
+            "venue": "venue",
+            "hall": "venue",
+            "ballroom": "venue",
+            "resort": "venue",
+            "farmhouse": "venue",
+            "palace": "venue",
+            "lawn": "venue",
+            "banquet": "venue",
+            # Attire
+            "lehenga": "attire",
+            "saree": "attire",
+            "sherwani": "attire",
+            "boutique": "attire",
+            "tailor": "attire",
+            "bridal wear": "attire",
+            "groom wear": "attire",
+            # Jewelry
+            "jewel": "jewelry",
+            "kundan": "jewelry",
+            "polki": "jewelry",
+            "gold": "jewelry",
+            # Choreographer
+            "choreograph": "choreographer",
+            "dance": "choreographer",
+            # Planner
+            "planner": "planner",
+            "coordinator": "planner",
+            "organizer": "planner",
+            # Favors
+            "favor": "favors",
+            "gift": "favors",
+            "trousseau": "favors",
+            "return gift": "favors",
+            # Travel
+            "honeymoon": "travel",
+            "travel": "travel",
+        }
+        for keyword, category in category_map.items():
+            if keyword in name_lower:
+                return category
+        return None
+
     async def _create_payment(
         self,
         event_id: str,
@@ -230,6 +428,10 @@ class ExtractionService:
         """Create a payment from extracted data."""
         vendor_id = None
         vendor_name = data.get("vendor_name")
+        vendor_category = data.get("vendor_category")
+        
+        if not vendor_category and vendor_name:
+            vendor_category = self._infer_vendor_category(vendor_name)
         
         if vendor_name:
             result = await db.execute(
@@ -241,8 +443,17 @@ class ExtractionService:
             vendor = result.scalar_one_or_none()
             if vendor:
                 vendor_id = vendor.id
+            else:
+                new_vendor = Vendor(
+                    event_id=event_id,
+                    name=vendor_name,
+                    category=vendor_category or "other",
+                )
+                db.add(new_vendor)
+                await db.flush()
+                vendor_id = new_vendor.id
         
-        amount = data.get("amount_paid") or 0
+        amount = data.get("amount_paid") or data.get("amount") or 0
         remaining_balance = data.get("remaining_balance") or 0
         
         due_date = None
@@ -258,45 +469,59 @@ class ExtractionService:
                 paid_date = date.fromisoformat(data["payment_date"])
             else:
                 paid_date = data["payment_date"]
-        elif data.get("amount_paid"):
+        elif data.get("paid_date"):
+            if isinstance(data["paid_date"], str):
+                paid_date = date.fromisoformat(data["paid_date"])
+            else:
+                paid_date = data["paid_date"]
+        elif amount and amount > 0:
             paid_date = date.today()
         
-        notes_parts = []
-        if data.get("notes"):
-            notes_parts.append(data["notes"])
-        if vendor_name:
-            notes_parts.append(f"Vendor: {vendor_name}")
-        if remaining_balance:
-            notes_parts.append(f"REMAINING_BALANCE: {remaining_balance}")
+        description = data.get("description") or ""
+        if not description and vendor_name:
+            description = f"Payment to {vendor_name}"
         
         payment = Payment(
             event_id=event_id,
             vendor_id=vendor_id,
             amount=amount,
             paid_date=paid_date,
-            due_date=due_date,
+            due_date=None,
             method=data.get("method"),
-            notes="; ".join(notes_parts) if notes_parts else None,
+            notes=description,
         )
         db.add(payment)
+        await db.flush()
+        
+        remaining_amount = 0
+        try:
+            remaining_amount = float(remaining_balance) if remaining_balance else 0
+        except (ValueError, TypeError):
+            remaining_amount = 0
+        
+        if remaining_amount > 0:
+            pending_payment = Payment(
+                event_id=event_id,
+                vendor_id=vendor_id,
+                amount=remaining_amount,
+                paid_date=None,
+                due_date=due_date,
+                method=None,
+                notes=f"Remaining balance to {vendor_name or 'vendor'}",
+            )
+            db.add(pending_payment)
+            
+            if due_date:
+                await self._create_payment_reminder_task(
+                    event_id=event_id,
+                    vendor_name=vendor_name or "Vendor",
+                    amount=remaining_amount,
+                    due_date=due_date,
+                    db=db,
+                )
+        
         await db.commit()
         await db.refresh(payment)
-        
-        # Auto-create a task for upcoming payment if there's a due date with remaining balance
-        remaining_balance = data.get("remaining_balance")
-        if due_date and remaining_balance:
-            try:
-                remaining_amount = float(remaining_balance) if remaining_balance else 0
-                if remaining_amount > 0:
-                    await self._create_payment_reminder_task(
-                        event_id=event_id,
-                        vendor_name=vendor_name or "Vendor",
-                        amount=remaining_amount,
-                        due_date=due_date,
-                        db=db,
-                    )
-            except (ValueError, TypeError):
-                pass
         
         return payment.id
     
@@ -559,6 +784,290 @@ class ExtractionService:
         await db.commit()
         await db.refresh(event)
         return event.id, f"Successfully updated event: {event.name}"
+    
+    async def handle_query(
+        self,
+        event_id: str,
+        data: dict,
+        db: AsyncSession,
+    ) -> dict:
+        """
+        Handle a query intent and return results with natural language response.
+        
+        Args:
+            event_id: The event ID
+            data: The query data from LLM extraction
+            db: Database session
+        
+        Returns:
+            Dict with query_type, results, and natural_response
+        """
+        query_type = data.get("query_type", "list")
+        target = data.get("target", "all")
+        filters = data.get("filters", {})
+        sort_by = data.get("sort_by")
+        sort_order = data.get("sort_order", "desc")
+        limit = data.get("limit")
+        
+        results = {}
+        
+        if target in ["payments", "all"]:
+            payments = await self._query_payments(event_id, filters, sort_by, sort_order, limit, db)
+            results["payments"] = payments
+        
+        if target in ["tasks", "all"]:
+            tasks = await self._query_tasks(event_id, filters, sort_by, sort_order, limit, db)
+            results["tasks"] = tasks
+        
+        if target in ["vendors", "all"]:
+            vendors = await self._query_vendors(event_id, filters, limit, db)
+            results["vendors"] = vendors
+        
+        if target in ["calendar_events", "all"]:
+            events = await self._query_calendar_events(event_id, filters, sort_by, sort_order, limit, db)
+            results["calendar_events"] = events
+        
+        natural_response = self._generate_query_response(query_type, target, results, filters)
+        
+        return {
+            "query_type": query_type,
+            "target": target,
+            "results": results,
+            "natural_response": natural_response,
+        }
+    
+    async def _query_payments(
+        self,
+        event_id: str,
+        filters: dict,
+        sort_by: Optional[str],
+        sort_order: str,
+        limit: Optional[int],
+        db: AsyncSession,
+    ) -> list[dict]:
+        """Query payments with filters."""
+        query = select(Payment).where(Payment.event_id == event_id)
+        
+        if filters.get("vendor_name"):
+            vendor_name = filters["vendor_name"]
+            vendor_result = await db.execute(
+                select(Vendor).where(
+                    Vendor.event_id == event_id,
+                    Vendor.name.ilike(f"%{vendor_name}%"),
+                )
+            )
+            vendor = vendor_result.scalar_one_or_none()
+            if vendor:
+                query = query.where(Payment.vendor_id == vendor.id)
+        
+        if filters.get("status") == "pending":
+            query = query.where(Payment.due_date.isnot(None))
+        
+        if sort_by == "amount":
+            query = query.order_by(desc(Payment.amount) if sort_order == "desc" else asc(Payment.amount))
+        elif sort_by == "date":
+            query = query.order_by(desc(Payment.paid_date) if sort_order == "desc" else asc(Payment.paid_date))
+        else:
+            query = query.order_by(desc(Payment.created_at))
+        
+        if limit:
+            query = query.limit(limit)
+        
+        result = await db.execute(query)
+        payments = result.scalars().all()
+        
+        payment_list = []
+        for p in payments:
+            vendor_name = None
+            if p.vendor_id:
+                v_result = await db.execute(select(Vendor).where(Vendor.id == p.vendor_id))
+                vendor = v_result.scalar_one_or_none()
+                vendor_name = vendor.name if vendor else None
+            
+            payment_list.append({
+                "id": p.id,
+                "amount": float(p.amount) if p.amount else 0,
+                "vendor_name": vendor_name,
+                "paid_date": p.paid_date.isoformat() if p.paid_date else None,
+                "due_date": p.due_date.isoformat() if p.due_date else None,
+                "method": p.method,
+                "notes": p.notes,
+            })
+        
+        return payment_list
+    
+    async def _query_tasks(
+        self,
+        event_id: str,
+        filters: dict,
+        sort_by: Optional[str],
+        sort_order: str,
+        limit: Optional[int],
+        db: AsyncSession,
+    ) -> list[dict]:
+        """Query tasks with filters."""
+        query = select(Task).where(Task.event_id == event_id)
+        
+        if filters.get("status"):
+            status_val = filters["status"].upper()
+            if hasattr(TaskStatus, status_val):
+                query = query.where(Task.status == TaskStatus[status_val])
+        
+        if filters.get("due_date_range") == "this_week":
+            today = date.today()
+            week_end = today + timedelta(days=7)
+            query = query.where(Task.due_date >= today, Task.due_date <= week_end)
+        
+        if sort_by == "due_date":
+            query = query.order_by(desc(Task.due_date) if sort_order == "desc" else asc(Task.due_date))
+        else:
+            query = query.order_by(asc(Task.due_date))
+        
+        if limit:
+            query = query.limit(limit)
+        
+        result = await db.execute(query)
+        tasks = result.scalars().all()
+        
+        return [
+            {
+                "id": t.id,
+                "title": t.title,
+                "description": t.description,
+                "due_date": t.due_date.isoformat() if t.due_date else None,
+                "status": t.status.value if t.status else None,
+                "priority": t.priority.value if t.priority else None,
+            }
+            for t in tasks
+        ]
+    
+    async def _query_vendors(
+        self,
+        event_id: str,
+        filters: dict,
+        limit: Optional[int],
+        db: AsyncSession,
+    ) -> list[dict]:
+        """Query vendors with filters."""
+        query = select(Vendor).where(Vendor.event_id == event_id)
+        
+        if filters.get("category"):
+            query = query.where(Vendor.category.ilike(f"%{filters['category']}%"))
+        
+        query = query.order_by(Vendor.name)
+        
+        if limit:
+            query = query.limit(limit)
+        
+        result = await db.execute(query)
+        vendors = result.scalars().all()
+        
+        return [
+            {
+                "id": v.id,
+                "name": v.name,
+                "category": v.category,
+                "contact_info": v.contact_info,
+                "notes": v.notes,
+            }
+            for v in vendors
+        ]
+    
+    async def _query_calendar_events(
+        self,
+        event_id: str,
+        filters: dict,
+        sort_by: Optional[str],
+        sort_order: str,
+        limit: Optional[int],
+        db: AsyncSession,
+    ) -> list[dict]:
+        """Query calendar events with filters."""
+        query = select(CalendarEvent).where(CalendarEvent.event_id == event_id)
+        
+        if filters.get("upcoming"):
+            query = query.where(CalendarEvent.event_date >= date.today())
+        
+        if filters.get("due_date_range") == "this_week":
+            today = date.today()
+            week_end = today + timedelta(days=7)
+            query = query.where(CalendarEvent.event_date >= today, CalendarEvent.event_date <= week_end)
+        
+        if sort_by == "date":
+            query = query.order_by(desc(CalendarEvent.event_date) if sort_order == "desc" else asc(CalendarEvent.event_date))
+        else:
+            query = query.order_by(asc(CalendarEvent.event_date))
+        
+        if limit:
+            query = query.limit(limit)
+        
+        result = await db.execute(query)
+        events = result.scalars().all()
+        
+        return [
+            {
+                "id": e.id,
+                "title": e.title,
+                "event_date": e.event_date.isoformat() if e.event_date else None,
+                "event_time": e.event_time.strftime("%H:%M") if e.event_time else None,
+                "location": e.location,
+                "notes": e.notes,
+            }
+            for e in events
+        ]
+    
+    def _generate_query_response(
+        self,
+        query_type: str,
+        target: str,
+        results: dict,
+        filters: dict,
+    ) -> str:
+        """Generate a natural language response for the query results."""
+        total_items = sum(len(items) for items in results.values())
+        
+        if total_items == 0:
+            if target == "payments":
+                return "I couldn't find any payments matching your criteria."
+            elif target == "tasks":
+                return "No tasks found matching your criteria."
+            elif target == "vendors":
+                return "No vendors found."
+            elif target == "calendar_events":
+                return "No upcoming events found."
+            return "I couldn't find any matching records."
+        
+        response_parts = []
+        
+        if "payments" in results and results["payments"]:
+            payments = results["payments"]
+            total_amount = sum(p.get("amount", 0) for p in payments)
+            
+            if query_type == "aggregate" and len(payments) == 1:
+                p = payments[0]
+                vendor = p.get("vendor_name") or "Unknown vendor"
+                amount = p.get("amount", 0)
+                response_parts.append(f"Your largest expense is ${amount:,.2f} to {vendor}.")
+            else:
+                response_parts.append(f"Found {len(payments)} payment(s) totaling ${total_amount:,.2f}.")
+        
+        if "tasks" in results and results["tasks"]:
+            tasks = results["tasks"]
+            pending = sum(1 for t in tasks if t.get("status") == "pending")
+            if pending > 0:
+                response_parts.append(f"You have {pending} pending task(s).")
+            else:
+                response_parts.append(f"Found {len(tasks)} task(s).")
+        
+        if "vendors" in results and results["vendors"]:
+            vendors = results["vendors"]
+            response_parts.append(f"Found {len(vendors)} vendor(s).")
+        
+        if "calendar_events" in results and results["calendar_events"]:
+            events = results["calendar_events"]
+            response_parts.append(f"Found {len(events)} upcoming event(s).")
+        
+        return " ".join(response_parts)
 
 
 def get_extraction_service() -> ExtractionService:

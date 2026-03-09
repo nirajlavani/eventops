@@ -1,13 +1,16 @@
 from typing import List
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models.event import Event
 from app.models.payment import Payment
-from app.schemas.payment import PaymentCreate, PaymentUpdate, PaymentResponse
+from app.models.vendor import Vendor
+from app.schemas.payment import PaymentCreate, PaymentUpdate, PaymentResponse, PaymentWithVendor
 
 router = APIRouter()
 
@@ -40,12 +43,12 @@ async def create_payment(
     return payment
 
 
-@router.get("", response_model=List[PaymentResponse])
+@router.get("", response_model=List[PaymentWithVendor])
 async def list_payments(
     event_id: str,
     db: AsyncSession = Depends(get_db),
-) -> List[Payment]:
-    """List all payments for an event."""
+) -> List[PaymentWithVendor]:
+    """List all payments for an event with vendor details."""
     await get_event_or_404(event_id, db)
     
     result = await db.execute(
@@ -53,7 +56,47 @@ async def list_payments(
         .where(Payment.event_id == event_id)
         .order_by(Payment.created_at.desc())
     )
-    return list(result.scalars().all())
+    payments = result.scalars().all()
+    
+    vendors_result = await db.execute(
+        select(Vendor).where(Vendor.event_id == event_id)
+    )
+    vendors = {v.id: v.name for v in vendors_result.scalars().all()}
+    
+    payment_list = []
+    for p in payments:
+        vendor_name = vendors.get(p.vendor_id) if p.vendor_id else None
+        
+        description = None
+        if p.notes:
+            clean_notes = re.sub(r"REMAINING_BALANCE:\s*\d+(?:\.\d+)?;?\s*", "", p.notes).strip("; ")
+            clean_notes = re.sub(r"Vendor:\s*[^;]+;?\s*", "", clean_notes).strip("; ")
+            if clean_notes:
+                description = clean_notes
+        
+        if not description and vendor_name:
+            description = f"Payment to {vendor_name}"
+        elif not description and not vendor_name:
+            description = "Payment"
+        
+        amount_paid = p.amount if p.paid_date else 0
+        
+        payment_list.append(PaymentWithVendor(
+            id=p.id,
+            event_id=p.event_id,
+            vendor_id=p.vendor_id,
+            vendor_name=vendor_name,
+            amount=p.amount,
+            amount_paid=amount_paid,
+            paid_date=p.paid_date,
+            due_date=p.due_date,
+            method=p.method,
+            notes=p.notes,
+            description=description,
+            created_at=p.created_at,
+        ))
+    
+    return payment_list
 
 
 @router.get("/{payment_id}", response_model=PaymentResponse)

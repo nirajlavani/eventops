@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from app.database import init_db
 from app.config import get_settings
-from app.routers import events, vendors, payments, tasks, calendar, capture, dashboard, planning, sub_events
+from app.routers import events, vendors, payments, tasks, calendar, capture, dashboard, planning, sub_events, feedback
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
@@ -38,6 +38,7 @@ app.include_router(calendar.router, prefix="/api/events/{event_id}/calendar", ta
 app.include_router(capture.router, prefix="/api/events/{event_id}/capture", tags=["Capture"])
 app.include_router(dashboard.router, prefix="/api/events/{event_id}/dashboard", tags=["Dashboard"])
 app.include_router(planning.router, prefix="/api/events/{event_id}/planning", tags=["Planning"])
+app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
 
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR / "static"), name="static")

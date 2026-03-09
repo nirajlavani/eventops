@@ -1,0 +1,271 @@
+/**
+ * EventOps AI - Brand Color System
+ * Palette: MP059 inspired
+ * 
+ * This file defines the core brand colors, semantic mappings,
+ * and gradient combinations for the EventOps UI.
+ *
+ * ========================================
+ * LOGO ASSETS
+ * ========================================
+ * 
+ * ========================================
+ * FONT ASSETS
+ * ========================================
+ * 
+ * Location: /static/fonts/
+ * 
+ * Aminute.otf       - Display/Heading font (elegant, modern serif)
+ * HelveticaNeue.ttc - Body/Text font (clean, readable sans-serif)
+ * 
+ * Usage:
+ * - Headings, titles, logo text: Aminute
+ * - Body text, UI elements, buttons: Helvetica Neue
+ *
+ * ========================================
+ * LOGO ASSETS
+ * ========================================
+ *
+ * Location: /static/images/
+ * 
+ * logo-black.png  - Black logo for light backgrounds
+ * logo-white.png  - White logo for dark backgrounds (sidebar, chat)
+ * 
+ * The logo features an elegant "E" letterform with a sparkle/star accent,
+ * representing EventOps' AI-powered event planning capabilities.
+ * 
+ * Usage:
+ * - Sidebar header: logo-white.png (on Black Kite background)
+ * - Light sections: logo-black.png (on Morning Snow background)
+ * - Recommended size: 40-60px height for headers
+ */
+
+:root {
+  /* ========================================
+   * PRIMARY PALETTE
+   * ======================================== */
+  
+  /* Neutrals / Backgrounds */
+  --color-morning-snow: #F5F4ED;      /* Primary background - warm off-white */
+  --color-amazon-mist: #ECECDC;       /* Secondary background - slightly darker cream */
+  
+  /* Accent Colors */
+  --color-aqua-mist: #A0C9CB;         /* Cool accent - soft teal */
+  --color-toxic-orange: #FF6037;      /* Primary accent - vibrant orange */
+  
+  /* Dark Colors */
+  --color-black-kite: #351E1C;        /* Primary dark - warm off-black/dark brown */
+  --color-garnet: #733635;            /* Secondary dark - deep maroon/burgundy */
+
+  /* ========================================
+   * DERIVED COLORS
+   * Lighter and darker variations
+   * ======================================== */
+  
+  /* Orange variations */
+  --color-orange-light: #FF8A6A;      /* Lighter orange for hover states */
+  --color-orange-dark: #E54A25;       /* Darker orange for active states */
+  
+  /* Aqua variations */
+  --color-aqua-light: #C5E0E2;        /* Lighter aqua for subtle highlights */
+  --color-aqua-dark: #7AB3B6;         /* Darker aqua for depth */
+  
+  /* Garnet variations */
+  --color-garnet-light: #8E4A48;      /* Lighter garnet */
+  --color-garnet-dark: #5A2826;       /* Darker garnet */
+
+  /* ========================================
+   * SEMANTIC COLOR MAPPINGS
+   * Use these for consistent UI elements
+   * ======================================== */
+  
+  /* Backgrounds */
+  --bg-primary: var(--color-morning-snow);
+  --bg-secondary: var(--color-amazon-mist);
+  --bg-sidebar: var(--color-black-kite);
+  --bg-card: rgba(255, 255, 255, 0.85);
+  --bg-chat: var(--color-black-kite);
+  
+  /* Text */
+  --text-primary: var(--color-black-kite);
+  --text-secondary: var(--color-garnet);
+  --text-muted: #6B5B59;
+  --text-on-dark: var(--color-morning-snow);
+  --text-on-accent: #FFFFFF;
+  
+  /* Accents & Interactive */
+  --accent-primary: var(--color-toxic-orange);
+  --accent-secondary: var(--color-aqua-mist);
+  --accent-hover: var(--color-orange-light);
+  --accent-active: var(--color-orange-dark);
+  
+  /* Status Colors (derived from palette) */
+  --color-success: #6BA87B;           /* Muted green harmonizing with palette */
+  --color-warning: var(--color-toxic-orange);
+  --color-error: var(--color-garnet);
+  --color-info: var(--color-aqua-mist);
+
+  /* ========================================
+   * STAT CARD COLORS
+   * Specific colors for dashboard stats
+   * ======================================== */
+  
+  --stat-paid: var(--color-aqua-mist);
+  --stat-pending: var(--color-toxic-orange);
+  --stat-tasks: var(--color-garnet);
+  --stat-upcoming: var(--color-amazon-mist);
+
+  /* ========================================
+   * GRADIENTS
+   * Brand gradient combinations
+   * ======================================== */
+  
+  /* Warm Sunset - Orange to Garnet */
+  --gradient-warm: linear-gradient(135deg, var(--color-toxic-orange) 0%, var(--color-garnet) 100%);
+  
+  /* Cool Mist - Aqua variations */
+  --gradient-cool: linear-gradient(135deg, var(--color-aqua-light) 0%, var(--color-aqua-mist) 100%);
+  
+  /* Neutral Fade - Cream tones */
+  --gradient-neutral: linear-gradient(180deg, var(--color-morning-snow) 0%, var(--color-amazon-mist) 100%);
+  
+  /* Dark Depth - Dark brown to garnet */
+  --gradient-dark: linear-gradient(135deg, var(--color-black-kite) 0%, var(--color-garnet-dark) 100%);
+  
+  /* Accent Glow - Orange with soft edges */
+  --gradient-glow: radial-gradient(ellipse at center, var(--color-toxic-orange) 0%, rgba(255, 96, 55, 0) 70%);
+  
+  /* Misty Horizon - Aqua to Orange (from image) */
+  --gradient-horizon: linear-gradient(180deg, 
+    var(--color-aqua-mist) 0%, 
+    var(--color-amazon-mist) 40%, 
+    var(--color-toxic-orange) 100%
+  );
+  
+  /* Soft Blur Background (inspired by image examples) */
+  --gradient-blur-aqua: linear-gradient(135deg, 
+    rgba(160, 201, 203, 0.6) 0%, 
+    rgba(236, 236, 220, 0.8) 50%, 
+    rgba(160, 201, 203, 0.4) 100%
+  );
+  
+  --gradient-blur-warm: linear-gradient(135deg, 
+    rgba(255, 96, 55, 0.7) 0%, 
+    rgba(115, 54, 53, 0.8) 100%
+  );
+
+  /* ========================================
+   * SHADOWS
+   * Consistent shadow system
+   * ======================================== */
+  
+  --shadow-sm: 0 1px 2px rgba(53, 30, 28, 0.06);
+  --shadow-md: 0 4px 12px rgba(53, 30, 28, 0.08);
+  --shadow-lg: 0 8px 24px rgba(53, 30, 28, 0.12);
+  --shadow-xl: 0 16px 48px rgba(53, 30, 28, 0.16);
+  
+  /* Colored shadows for accent elements */
+  --shadow-orange: 0 4px 16px rgba(255, 96, 55, 0.3);
+  --shadow-aqua: 0 4px 16px rgba(160, 201, 203, 0.4);
+
+  /* ========================================
+   * BORDER RADIUS
+   * Consistent rounding
+   * ======================================== */
+  
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* ========================================
+   * TYPOGRAPHY
+   * Font settings
+   * ======================================== */
+  
+  --font-heading: 'DM Serif Text', Georgia, serif;
+  --font-body: 'Helvetica Neue', 'HelveticaNeue', -apple-system, BlinkMacSystemFont, sans-serif;
+  
+  --font-weight-light: 300;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+}
+
+/* ========================================
+ * FONT FACE DECLARATIONS
+ * Custom fonts for EventOps branding
+ * ======================================== */
+
+/* DM Serif Text - Display/Heading Font (loaded via Google Fonts in glassmorphism.css) */
+
+/* Helvetica Neue - Body/Text Font */
+@font-face {
+  font-family: 'Helvetica Neue';
+  src: url('/static/fonts/HelveticaNeue.ttc') format('truetype-collection');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Helvetica Neue';
+  src: url('/static/fonts/HelveticaNeue.ttc') format('truetype-collection');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Helvetica Neue';
+  src: url('/static/fonts/HelveticaNeue.ttc') format('truetype-collection');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Helvetica Neue';
+  src: url('/static/fonts/HelveticaNeue.ttc') format('truetype-collection');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ========================================
+ * COLOR COMBINATION EXAMPLES
+ * Reference for common UI patterns
+ * ======================================== */
+
+/*
+ * COMBINATION 1: Primary Card
+ * Background: --bg-card (white with opacity)
+ * Text: --text-primary (Black Kite)
+ * Accent: --accent-primary (Toxic Orange)
+ * Border: 1px solid rgba(53, 30, 28, 0.08)
+ *
+ * COMBINATION 2: Sidebar/Dark Section
+ * Background: --bg-sidebar (Black Kite)
+ * Text: --text-on-dark (Morning Snow)
+ * Accent: --accent-primary (Toxic Orange)
+ *
+ * COMBINATION 3: Highlighted Card
+ * Background: --color-aqua-mist with 20% opacity
+ * Text: --text-primary (Black Kite)
+ * Border: --color-aqua-dark
+ *
+ * COMBINATION 4: Warning/Alert
+ * Background: --color-toxic-orange with 15% opacity
+ * Text: --color-garnet
+ * Border: --color-toxic-orange
+ *
+ * COMBINATION 5: Chat Bubble (User)
+ * Background: white
+ * Text: --color-black-kite
+ *
+ * COMBINATION 6: Chat Bubble (AI)
+ * Background: transparent
+ * Text: --text-on-dark (Morning Snow / off-white)
+ */

@@ -1,4 +1,4 @@
-from app.routers import events, vendors, payments, tasks, calendar, capture, dashboard, planning
+from app.routers import events, vendors, payments, tasks, calendar, capture, dashboard, planning, sub_events, feedback
 
 __all__ = [
     "events",
@@ -9,4 +9,6 @@ __all__ = [
     "capture",
     "dashboard",
     "planning",
+    "sub_events",
+    "feedback",
 ]
