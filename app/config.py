@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./eventops.db"
     environment: str = "development"
     debug: bool = True
+    upload_dir: str = "uploads"
+    max_upload_size_mb: int = 25
     
     model_config = {
         "env_file": ".env",

@@ -4,10 +4,21 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+
+
+class NoCacheStaticMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        if request.url.path.startswith("/static/") or request.url.path == "/":
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
 
 from app.database import init_db
 from app.config import get_settings
-from app.routers import events, vendors, payments, tasks, calendar, capture, dashboard, planning, sub_events, feedback
+from app.routers import events, vendors, payments, tasks, calendar, capture, dashboard, planning, sub_events, feedback, attachments
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
@@ -29,6 +40,8 @@ app = FastAPI(
     debug=settings.debug,
 )
 
+app.add_middleware(NoCacheStaticMiddleware)
+
 app.include_router(events.router, prefix="/api/events", tags=["Events"])
 app.include_router(sub_events.router, prefix="/api/events/{event_id}/sub-events", tags=["Sub-Events"])
 app.include_router(vendors.router, prefix="/api/events/{event_id}/vendors", tags=["Vendors"])
@@ -38,6 +51,7 @@ app.include_router(calendar.router, prefix="/api/events/{event_id}/calendar", ta
 app.include_router(capture.router, prefix="/api/events/{event_id}/capture", tags=["Capture"])
 app.include_router(dashboard.router, prefix="/api/events/{event_id}/dashboard", tags=["Dashboard"])
 app.include_router(planning.router, prefix="/api/events/{event_id}/planning", tags=["Planning"])
+app.include_router(attachments.router, prefix="/api/events/{event_id}/attachments", tags=["Attachments"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
 
 if FRONTEND_DIR.exists():

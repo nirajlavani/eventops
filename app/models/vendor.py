@@ -10,6 +10,7 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.event import Event
     from app.models.payment import Payment
+    from app.models.attachment import Attachment
 
 
 class Vendor(Base):
@@ -42,4 +43,8 @@ class Vendor(Base):
         "Payment",
         back_populates="vendor",
         cascade="all, delete-orphan",
+    )
+    attachments: Mapped[List["Attachment"]] = relationship(
+        "Attachment",
+        back_populates="vendor",
     )

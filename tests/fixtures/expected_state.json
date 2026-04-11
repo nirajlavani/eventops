@@ -1,0 +1,112 @@
+{
+  "mega_wedding_final_state": {
+    "event": {
+      "name": "Priya and Rahul's Wedding",
+      "event_date": "2026-08-15"
+    },
+    "sub_events": [
+      {"name": "mehndi", "date": "2026-08-12", "time": "16:00"},
+      {"name": "sangeet", "date": "2026-08-13", "time": "18:00"},
+      {"name": "haldi", "date": "2026-08-14", "time": "10:00"},
+      {"name": "ceremony", "date": "2026-08-15", "time": "11:00"},
+      {"name": "reception", "date": "2026-08-15", "time": "19:00"}
+    ],
+    "vendors": [
+      {"name": "The Grand Pavilion", "category": "venue", "total": 45000, "paid": 15000},
+      {"name": "Enmuse Photography", "category": "photography", "total": 12000, "paid": 12000},
+      {"name": "Royal Feast Caterers", "category": "catering", "total": null, "paid": 8000},
+      {"name": "Henna by Priya", "category": "mehndi", "total": 2500, "paid": 500},
+      {"name": "Celebrations Decor", "category": "decor", "total": 18000, "paid": 6000},
+      {"name": "DJ Krish", "category": "music_dj", "total": 3500, "paid": 3000},
+      {"name": "Pandit Sharma", "category": "officiant", "total": 1500, "paid": 1500},
+      {"name": "Glow by Neha", "category": "makeup_hair", "total": 4000, "paid": 1500},
+      {"name": "Petals & Blooms", "category": "florist", "total": 7500, "paid": 7500},
+      {"name": "Video Vihaar", "category": "videography", "total": 8000, "paid": 4000},
+      {"name": "Dance With Me", "category": "choreographer", "total": 2000, "paid": 800},
+      {"name": "Paper Trail", "category": "invitations", "total": 1800, "paid": 1800},
+      {"name": "Sabyasachi", "category": "attire", "total": 15000, "paid": 10000},
+      {"name": "Tanishq", "category": "jewelry", "total": 8500, "paid": 8500},
+      {"name": "Punjab Dhol Group", "category": "music_dj", "total": 800, "paid": 800},
+      {"name": "Classic Rides", "category": "transportation", "total": 1200, "paid": 400},
+      {"name": "Sweet Delights", "category": "bakery", "total": 600, "paid": 600},
+      {"name": "Dream Day Planners", "category": "planner", "total": 8000, "paid": 3000},
+      {"name": "Gift Gallery", "category": "favors", "total": 1500, "paid": 1500}
+    ],
+    "totals": {
+      "total_budget": 141400,
+      "total_paid": 86400,
+      "total_pending": 55000
+    },
+    "categories_covered": [
+      "venue",
+      "photography", 
+      "videography",
+      "catering",
+      "florist",
+      "music_dj",
+      "decor",
+      "makeup_hair",
+      "mehndi",
+      "officiant",
+      "transportation",
+      "bakery",
+      "invitations",
+      "attire",
+      "jewelry",
+      "choreographer",
+      "planner",
+      "favors"
+    ]
+  },
+  "test_assertions": {
+    "vendor_name_required": {
+      "prompts_requiring_clarification": [
+        "I paid my caterer $8,000",
+        "Paid the florist $500",
+        "Gave the photographer a deposit"
+      ],
+      "expected_response": "response_mode=clarify asking for business name"
+    },
+    "category_inference": {
+      "photographer": "photography",
+      "videographer": "videography",
+      "video": "videography",
+      "caterer": "catering",
+      "food": "catering",
+      "florist": "florist",
+      "flowers": "florist",
+      "dj": "music_dj",
+      "band": "music_dj",
+      "dhol": "music_dj",
+      "decorator": "decor",
+      "makeup": "makeup_hair",
+      "mua": "makeup_hair",
+      "mehndi": "mehndi",
+      "henna": "mehndi",
+      "pandit": "officiant",
+      "priest": "officiant",
+      "pujari": "officiant",
+      "car": "transportation",
+      "limo": "transportation",
+      "cake": "bakery",
+      "invitation": "invitations",
+      "lehenga": "attire",
+      "sherwani": "attire",
+      "jewel": "jewelry",
+      "choreograph": "choreographer",
+      "planner": "planner",
+      "favor": "favors",
+      "gift": "favors"
+    },
+    "partial_payment_behavior": {
+      "creates_paid_record": true,
+      "creates_pending_record_if_remaining": true,
+      "creates_task_if_due_date": true
+    },
+    "empty_data_responses": {
+      "should_not_hallucinate": true,
+      "should_acknowledge_empty": true,
+      "should_suggest_next_steps": true
+    }
+  }
+}

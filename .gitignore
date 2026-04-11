@@ -36,6 +36,9 @@ eventops_venv/
 *.db
 *.sqlite3
 
+# Uploads
+uploads/
+
 # IDE
 .idea/
 .vscode/

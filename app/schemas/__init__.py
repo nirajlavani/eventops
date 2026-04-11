@@ -32,6 +32,7 @@ from app.schemas.dashboard import (
     FinancialSummary,
 )
 from app.schemas.planning import PlanningRequest, PlanningResponse, PriorityItem
+from app.schemas.attachment import AttachmentResponse, AttachmentUpdate
 
 __all__ = [
     "EventCreate",
@@ -77,4 +78,6 @@ __all__ = [
     "PlanningRequest",
     "PlanningResponse",
     "PriorityItem",
+    "AttachmentResponse",
+    "AttachmentUpdate",
 ]

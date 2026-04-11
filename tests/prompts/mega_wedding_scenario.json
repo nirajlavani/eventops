@@ -1,0 +1,409 @@
+{
+  "scenario_name": "Priya & Rahul's Grand Indian Wedding",
+  "description": "Comprehensive test scenario simulating a complex multi-day Indian wedding with various vendors, payments, tasks, and sub-events",
+  "test_date": "2026-03-09",
+  "prompts": [
+    {
+      "id": "001_create_event",
+      "category": "event_creation",
+      "prompt": "I'm planning Priya and Rahul's wedding for August 15th, 2026",
+      "expected_behavior": "Creates event with name and date",
+      "expected_extractions": {
+        "event_name": "Priya and Rahul's Wedding",
+        "event_date": "2026-08-15"
+      }
+    },
+    {
+      "id": "002_add_subevents",
+      "category": "sub_events",
+      "prompt": "We have 5 events: Mehndi on Aug 12th at 4pm, Sangeet on Aug 13th evening, Haldi ceremony Aug 14th morning, Wedding ceremony Aug 15th at 11am, and Reception Aug 15th at 7pm",
+      "expected_behavior": "Creates 5 sub-events with dates and times",
+      "expected_extractions": {
+        "sub_events": ["mehndi", "sangeet", "haldi", "ceremony", "reception"]
+      }
+    },
+    {
+      "id": "003_venue_booking_partial",
+      "category": "payment_partial",
+      "prompt": "Booked The Grand Pavilion as our venue for $45,000. Paid $15,000 deposit today, remaining due July 1st",
+      "expected_behavior": "Should ask for vendor category OR infer venue, create payment + pending payment + task",
+      "expected_extractions": {
+        "vendor_name": "The Grand Pavilion",
+        "vendor_category": "venue",
+        "amount_paid": 15000,
+        "remaining_balance": 30000,
+        "due_date": "2026-07-01"
+      },
+      "expected_records": {
+        "payments": 2,
+        "tasks": 1,
+        "vendors": 1
+      }
+    },
+    {
+      "id": "004_photographer_full_payment",
+      "category": "payment_full",
+      "prompt": "Paid Enmuse Photography $12,000 in full today via bank transfer for all events coverage",
+      "expected_behavior": "Creates vendor and single payment, no pending",
+      "expected_extractions": {
+        "vendor_name": "Enmuse Photography",
+        "vendor_category": "photography",
+        "amount_paid": 12000,
+        "method": "bank_transfer"
+      }
+    },
+    {
+      "id": "005_vendor_without_name",
+      "category": "clarification_needed",
+      "prompt": "I paid my caterer $8,000 yesterday as a deposit",
+      "expected_behavior": "Should ask for the caterer's business name",
+      "expected_response_mode": "clarify",
+      "follow_up": {
+        "prompt": "Royal Feast Caterers",
+        "expected_behavior": "Creates vendor with category=catering and payment"
+      }
+    },
+    {
+      "id": "006_mehndi_artist",
+      "category": "payment_partial",
+      "prompt": "Booked Henna by Priya for mehndi, total cost $2,500. Gave her $500 advance, rest due day before the event",
+      "expected_behavior": "Creates mehndi vendor, payment, pending payment for Aug 11",
+      "expected_extractions": {
+        "vendor_name": "Henna by Priya",
+        "vendor_category": "mehndi",
+        "amount_paid": 500,
+        "remaining_balance": 2000
+      }
+    },
+    {
+      "id": "007_multiple_tasks",
+      "category": "bulk_tasks",
+      "prompt": "Add these tasks: 1) Finalize guest list by April 15th 2) Order wedding invitations by May 1st 3) Book hotel rooms for guests by June 1st 4) Arrange airport pickups for out-of-town family",
+      "expected_behavior": "Creates 4 tasks with appropriate due dates",
+      "expected_records": {
+        "tasks": 4
+      }
+    },
+    {
+      "id": "008_decorator_booking",
+      "category": "payment_with_category",
+      "prompt": "Hired Celebrations Decor for $18,000. Paid $6,000 today, $6,000 due June 15th, final $6,000 due Aug 10th",
+      "expected_behavior": "Should ask vendor type, then create payment with 2 pending payments",
+      "follow_up": {
+        "prompt": "They're our decorator for all events",
+        "expected_extractions": {
+          "vendor_category": "decor"
+        }
+      }
+    },
+    {
+      "id": "009_dj_sangeet",
+      "category": "payment_partial",
+      "prompt": "DJ Krish will handle sangeet music for $3,500. Paid $1,000 booking fee via Venmo",
+      "expected_behavior": "Creates DJ vendor with partial payment",
+      "expected_extractions": {
+        "vendor_name": "DJ Krish",
+        "vendor_category": "music_dj",
+        "amount_paid": 1000,
+        "remaining_balance": 2500
+      }
+    },
+    {
+      "id": "010_pandit_booking",
+      "category": "officiant",
+      "prompt": "Pandit Sharma will perform the wedding ceremony. His fee is $1,500, paid in full today by check",
+      "expected_behavior": "Creates officiant vendor with full payment",
+      "expected_extractions": {
+        "vendor_name": "Pandit Sharma",
+        "vendor_category": "officiant",
+        "amount_paid": 1500,
+        "method": "check"
+      }
+    },
+    {
+      "id": "011_makeup_artist",
+      "category": "payment_partial",
+      "prompt": "Glow by Neha will do bridal makeup and hair. Total $4,000, paid $1,500 deposit",
+      "expected_behavior": "Creates makeup_hair vendor",
+      "expected_extractions": {
+        "vendor_name": "Glow by Neha",
+        "vendor_category": "makeup_hair",
+        "amount_paid": 1500,
+        "remaining_balance": 2500
+      }
+    },
+    {
+      "id": "012_florist",
+      "category": "payment_full",
+      "prompt": "Petals & Blooms will handle all floral arrangements for $7,500. Paid today in full",
+      "expected_behavior": "Creates florist vendor with full payment",
+      "expected_extractions": {
+        "vendor_name": "Petals & Blooms",
+        "vendor_category": "florist",
+        "amount_paid": 7500
+      }
+    },
+    {
+      "id": "013_videographer",
+      "category": "payment_partial",
+      "prompt": "Video Vihaar will do cinematic wedding film for $8,000. Paid half today",
+      "expected_behavior": "Creates videography vendor",
+      "expected_extractions": {
+        "vendor_name": "Video Vihaar",
+        "vendor_category": "videography",
+        "amount_paid": 4000,
+        "remaining_balance": 4000
+      }
+    },
+    {
+      "id": "014_choreographer",
+      "category": "new_category",
+      "prompt": "Hired Dance With Me studio to choreograph sangeet performances. $2,000 total, paid $800 for first session",
+      "expected_behavior": "Creates choreographer vendor",
+      "expected_extractions": {
+        "vendor_name": "Dance With Me",
+        "vendor_category": "choreographer",
+        "amount_paid": 800,
+        "remaining_balance": 1200
+      }
+    },
+    {
+      "id": "015_invitation_cards",
+      "category": "payment_full",
+      "prompt": "Ordered wedding invitations from Paper Trail for $1,800. Paid in full yesterday",
+      "expected_behavior": "Creates invitations vendor",
+      "expected_extractions": {
+        "vendor_name": "Paper Trail",
+        "vendor_category": "invitations"
+      }
+    },
+    {
+      "id": "016_bridal_lehenga",
+      "category": "attire",
+      "prompt": "Bought Priya's bridal lehenga from Sabyasachi for $15,000. Paid $10,000, rest due on pickup in July",
+      "expected_behavior": "Creates attire vendor",
+      "expected_extractions": {
+        "vendor_name": "Sabyasachi",
+        "vendor_category": "attire",
+        "amount_paid": 10000,
+        "remaining_balance": 5000
+      }
+    },
+    {
+      "id": "017_jewelry",
+      "category": "jewelry",
+      "prompt": "Purchased bridal jewelry set from Tanishq for $8,500 cash",
+      "expected_behavior": "Creates jewelry vendor with full payment",
+      "expected_extractions": {
+        "vendor_name": "Tanishq",
+        "vendor_category": "jewelry",
+        "amount_paid": 8500,
+        "method": "cash"
+      }
+    },
+    {
+      "id": "018_dhol_baraat",
+      "category": "music",
+      "prompt": "Booked Punjab Dhol Group for baraat procession - $800, paid today",
+      "expected_behavior": "Creates music_dj vendor",
+      "expected_extractions": {
+        "vendor_name": "Punjab Dhol Group",
+        "vendor_category": "music_dj",
+        "amount_paid": 800
+      }
+    },
+    {
+      "id": "019_transportation",
+      "category": "transportation",
+      "prompt": "Rented vintage car from Classic Rides for $1,200 for the wedding day. Paid $400 deposit",
+      "expected_behavior": "Creates transportation vendor",
+      "expected_extractions": {
+        "vendor_name": "Classic Rides",
+        "vendor_category": "transportation",
+        "amount_paid": 400,
+        "remaining_balance": 800
+      }
+    },
+    {
+      "id": "020_cake",
+      "category": "bakery",
+      "prompt": "Sweet Delights will make 3-tier wedding cake for $600. Paid in full",
+      "expected_behavior": "Creates bakery vendor",
+      "expected_extractions": {
+        "vendor_name": "Sweet Delights",
+        "vendor_category": "bakery",
+        "amount_paid": 600
+      }
+    },
+    {
+      "id": "021_query_total_spent",
+      "category": "query",
+      "prompt": "How much have I spent so far?",
+      "expected_behavior": "Returns aggregate of all payments made",
+      "expected_response_mode": "answer"
+    },
+    {
+      "id": "022_query_pending",
+      "category": "query",
+      "prompt": "What payments are still pending?",
+      "expected_behavior": "Lists all pending payments with amounts and due dates",
+      "expected_response_mode": "answer"
+    },
+    {
+      "id": "023_query_vendor_specific",
+      "category": "query",
+      "prompt": "How much have I paid the decorator?",
+      "expected_behavior": "Returns payment info for Celebrations Decor",
+      "expected_response_mode": "answer"
+    },
+    {
+      "id": "024_update_payment",
+      "category": "update",
+      "prompt": "Just paid another $2,000 to DJ Krish today",
+      "expected_behavior": "Creates additional payment to existing vendor, updates remaining balance logic",
+      "expected_extractions": {
+        "vendor_name": "DJ Krish",
+        "amount_paid": 2000
+      }
+    },
+    {
+      "id": "025_reschedule_subevent",
+      "category": "sub_event_update",
+      "prompt": "Need to move the sangeet to Aug 13th at 6pm instead",
+      "expected_behavior": "Updates sangeet sub-event time",
+      "expected_extractions": {
+        "sub_event_name": "sangeet",
+        "new_start_time": "18:00"
+      }
+    },
+    {
+      "id": "026_add_calendar_event",
+      "category": "calendar",
+      "prompt": "Schedule a venue walkthrough on May 20th at 2pm at The Grand Pavilion",
+      "expected_behavior": "Creates calendar event",
+      "expected_extractions": {
+        "title": "venue walkthrough",
+        "event_date": "2026-05-20",
+        "event_time": "14:00",
+        "location": "The Grand Pavilion"
+      }
+    },
+    {
+      "id": "027_complete_task",
+      "category": "task_update",
+      "prompt": "Mark the guest list task as complete",
+      "expected_behavior": "Updates task status to completed"
+    },
+    {
+      "id": "028_query_tasks",
+      "category": "query",
+      "prompt": "What tasks are still pending?",
+      "expected_behavior": "Lists incomplete tasks",
+      "expected_response_mode": "answer"
+    },
+    {
+      "id": "029_query_vendors_by_category",
+      "category": "query",
+      "prompt": "Show me all my booked vendors",
+      "expected_behavior": "Lists all vendors with categories",
+      "expected_response_mode": "answer"
+    },
+    {
+      "id": "030_ambiguous_vendor",
+      "category": "clarification",
+      "prompt": "Paid Rani Events $5,000 deposit today",
+      "expected_behavior": "Should ask what type of vendor Rani Events is",
+      "expected_response_mode": "clarify"
+    },
+    {
+      "id": "031_duplicate_detection",
+      "category": "duplicate",
+      "prompt": "Paid Enmuse Photography $12,000 today",
+      "expected_behavior": "Should detect potential duplicate and ask for clarification",
+      "expected_response_mode": "clarify"
+    },
+    {
+      "id": "032_relative_date",
+      "category": "date_parsing",
+      "prompt": "Need to pay the videographer remaining balance next Friday",
+      "expected_behavior": "Creates task with correct relative date calculation"
+    },
+    {
+      "id": "033_budget_query",
+      "category": "query",
+      "prompt": "What's my largest expense so far?",
+      "expected_behavior": "Returns the highest payment (venue $15,000 or lehenga $10,000)",
+      "expected_response_mode": "answer"
+    },
+    {
+      "id": "034_upcoming_query",
+      "category": "query",
+      "prompt": "What payments are due in the next 30 days?",
+      "expected_behavior": "Filters and returns upcoming pending payments",
+      "expected_response_mode": "answer"
+    },
+    {
+      "id": "035_delete_task",
+      "category": "delete",
+      "prompt": "Remove the airport pickup task, we don't need it anymore",
+      "expected_behavior": "Should confirm before deleting",
+      "expected_response_mode": "confirm"
+    },
+    {
+      "id": "036_wedding_planner",
+      "category": "new_vendor_type",
+      "prompt": "Hired Dream Day Planners as our wedding coordinator for $8,000. Paid $3,000 retainer",
+      "expected_behavior": "Creates planner vendor",
+      "expected_extractions": {
+        "vendor_name": "Dream Day Planners",
+        "vendor_category": "planner",
+        "amount_paid": 3000,
+        "remaining_balance": 5000
+      }
+    },
+    {
+      "id": "037_favors",
+      "category": "new_vendor_type",
+      "prompt": "Ordered 200 wedding favors from Gift Gallery for $1,500. Paid in full",
+      "expected_behavior": "Creates favors vendor",
+      "expected_extractions": {
+        "vendor_name": "Gift Gallery",
+        "vendor_category": "favors"
+      }
+    },
+    {
+      "id": "038_summary_query",
+      "category": "query",
+      "prompt": "Give me a summary of the wedding budget",
+      "expected_behavior": "Provides comprehensive budget overview",
+      "expected_response_mode": "answer"
+    },
+    {
+      "id": "039_context_followup",
+      "category": "context_preservation",
+      "prompt": "And how much is still owed?",
+      "expected_behavior": "Uses conversation context to understand this refers to budget/payments",
+      "expected_response_mode": "answer"
+    },
+    {
+      "id": "040_final_verification",
+      "category": "query",
+      "prompt": "List all vendors and their payment status",
+      "expected_behavior": "Comprehensive vendor list with paid/pending amounts",
+      "expected_response_mode": "answer"
+    }
+  ],
+  "expected_final_state": {
+    "vendors_count": 20,
+    "payments_count": "20+",
+    "pending_payments_count": "10+",
+    "tasks_count": "5+",
+    "sub_events_count": 5,
+    "categories_used": [
+      "venue", "photography", "videography", "catering", "florist",
+      "music_dj", "decor", "makeup_hair", "mehndi", "officiant",
+      "transportation", "bakery", "invitations", "attire", "jewelry",
+      "choreographer", "planner", "favors"
+    ]
+  }
+}

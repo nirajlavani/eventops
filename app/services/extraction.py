@@ -1,10 +1,13 @@
 import json
+import logging
 from typing import Optional
 from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select, func, desc, asc
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.models.ai_log import AILog, AILogStatus
 from app.models.vendor import Vendor
@@ -119,15 +122,38 @@ class ExtractionService:
                     return False, f"Record not found or could not be deleted", None
             
             if intent == IntentType.PAYMENT:
+                replace_vendor = data.get("replace_pending_vendor")
+                if replace_vendor:
+                    await self._delete_pending_payments_for_vendor(
+                        event_id, replace_vendor, db
+                    )
+                
                 if action == ActionType.UPDATE and reference_id:
                     created_id = await self._update_payment(reference_id, data, db)
                     message = "Successfully updated payment"
+                elif action == ActionType.UPDATE and "items" in data and isinstance(data["items"], list):
+                    updated_count = 0
+                    for item in data["items"]:
+                        matched = await self._find_and_update_payment(event_id, item, db)
+                        if matched:
+                            updated_count += 1
+                    created_id = None
+                    message = f"Successfully updated {updated_count} payments"
+                elif "items" in data and isinstance(data["items"], list):
+                    created_ids = []
+                    for item in data["items"]:
+                        pid = await self._create_payment(event_id, item, db)
+                        created_ids.append(pid)
+                    created_id = created_ids[0] if created_ids else None
+                    message = f"Successfully created {len(created_ids)} payments"
                 else:
                     created_id = await self._create_payment(event_id, data, db)
                     message = "Successfully created payment"
             elif intent == IntentType.TASK:
-                # Handle bulk task creation
-                if data.get("items") and isinstance(data["items"], list):
+                if action == ActionType.UPDATE and reference_id:
+                    created_id = await self._update_task_by_id(reference_id, data, db)
+                    message = "Successfully updated task"
+                elif data.get("items") and isinstance(data["items"], list):
                     created_ids = []
                     for item in data["items"]:
                         task_id = await self._create_task(event_id, item, db)
@@ -141,8 +167,16 @@ class ExtractionService:
                 created_id = await self._create_calendar_event(event_id, data, db)
                 message = "Successfully created calendar event"
             elif intent == IntentType.VENDOR:
-                created_id = await self._create_vendor(event_id, data, db)
-                message = "Successfully created vendor"
+                if action == ActionType.UPDATE:
+                    created_id = await self._update_vendor_by_name(event_id, data, db)
+                    message = "Successfully updated vendor" if created_id else "Vendor not found"
+                elif action == ActionType.DELETE and reference_id:
+                    deleted = await self._delete_vendor_cascade(event_id, reference_id, db)
+                    message = "Successfully deleted vendor and associated records" if deleted else "Vendor not found"
+                    created_id = reference_id if deleted else None
+                else:
+                    created_id = await self._create_vendor(event_id, data, db)
+                    message = "Successfully created vendor"
             elif intent == IntentType.SUB_EVENT_UPDATE:
                 created_id, message = await self._handle_sub_event_update(event_id, data, db)
             elif intent == IntentType.EVENT_UPDATE:
@@ -212,6 +246,212 @@ class ExtractionService:
         await db.delete(record)
         await db.commit()
         return record_id
+    
+    async def _delete_vendor_cascade(
+        self,
+        event_id: str,
+        vendor_id: str,
+        db: AsyncSession,
+    ) -> bool:
+        """Delete a vendor and all associated payments and tasks."""
+        result = await db.execute(select(Vendor).where(Vendor.id == vendor_id))
+        vendor = result.scalar_one_or_none()
+        if not vendor:
+            return False
+
+        payments = await db.execute(
+            select(Payment).where(Payment.vendor_id == vendor_id)
+        )
+        for p in payments.scalars().all():
+            await db.delete(p)
+
+        tasks = await db.execute(
+            select(Task).where(Task.vendor_id == vendor_id)
+        )
+        for t in tasks.scalars().all():
+            await db.delete(t)
+
+        await db.delete(vendor)
+        await db.commit()
+        return True
+
+    async def _delete_pending_payments_for_vendor(
+        self,
+        event_id: str,
+        vendor_name: str,
+        db: AsyncSession,
+    ) -> int:
+        """Delete all unpaid pending payments (and their reminder tasks) for a vendor.
+        
+        Used when a user splits a remaining balance into individual installments,
+        replacing the single pending payment placeholder.
+        """
+        vendor = await self._find_vendor_by_name(event_id, vendor_name, db)
+        if not vendor:
+            return 0
+        
+        payments_result = await db.execute(
+            select(Payment).where(
+                Payment.event_id == event_id,
+                Payment.vendor_id == vendor.id,
+                Payment.paid_date.is_(None),
+            )
+        )
+        pending_payments = payments_result.scalars().all()
+        
+        deleted_count = 0
+        for payment in pending_payments:
+            task_result = await db.execute(
+                select(Task).where(
+                    Task.event_id == event_id,
+                    Task.title.contains(vendor_name),
+                    Task.status == TaskStatus.PENDING,
+                )
+            )
+            related_tasks = task_result.scalars().all()
+            for task in related_tasks:
+                await db.delete(task)
+            
+            await db.delete(payment)
+            deleted_count += 1
+        
+        if deleted_count > 0:
+            await db.flush()
+        
+        return deleted_count
+    
+    async def process_secondary_actions(
+        self,
+        event_id: str,
+        secondary_actions: list[dict],
+        db: AsyncSession,
+    ) -> list[str]:
+        """Process secondary actions emitted by the LLM alongside the primary intent."""
+        messages = []
+        for sa in secondary_actions:
+            sa_intent_str = sa.get("intent", "unknown")
+            sa_action_str = sa.get("action", "create")
+            sa_data = sa.get("data", {})
+            sa_ref_id = sa.get("reference_id")
+            
+            try:
+                sa_intent = IntentType(sa_intent_str)
+            except ValueError:
+                continue
+            
+            try:
+                if sa_intent == IntentType.EVENT_UPDATE:
+                    _, msg = await self._update_event(event_id, sa_data, db)
+                    messages.append(msg)
+                elif sa_intent == IntentType.CALENDAR_EVENT:
+                    await self._create_calendar_event(event_id, sa_data, db)
+                    messages.append(f"Created calendar event: {sa_data.get('title', 'Event')}")
+                elif sa_intent == IntentType.VENDOR:
+                    if sa_action_str == "update":
+                        await self._update_vendor_by_name(event_id, sa_data, db)
+                        messages.append(f"Updated vendor: {sa_data.get('name', 'vendor')}")
+                    else:
+                        await self._create_vendor(event_id, sa_data, db)
+                        messages.append(f"Created vendor: {sa_data.get('name', 'vendor')}")
+                elif sa_intent == IntentType.PAYMENT:
+                    await self._create_payment(event_id, sa_data, db)
+                    messages.append("Created payment record")
+                elif sa_intent == IntentType.TASK:
+                    if sa_action_str == "update" and sa_ref_id:
+                        await self._update_task_by_id(sa_ref_id, sa_data, db)
+                        messages.append(f"Updated task: {sa_ref_id}")
+                    elif sa_action_str == "delete" and sa_ref_id:
+                        await self._delete_record(IntentType.TASK, sa_ref_id, db)
+                        messages.append(f"Deleted task: {sa_ref_id}")
+                    else:
+                        await self._create_task(event_id, sa_data, db)
+                        messages.append(f"Created task: {sa_data.get('title', 'Task')}")
+            except Exception as e:
+                logger.error(f"Secondary action failed ({sa_intent}): {e}")
+        
+        return messages
+    
+    async def _find_vendor_by_name(
+        self,
+        event_id: str,
+        vendor_name: str,
+        db: AsyncSession,
+    ) -> Optional[Vendor]:
+        """Find a vendor by name within an event. Returns the first match or None."""
+        result = await db.execute(
+            select(Vendor).where(
+                Vendor.event_id == event_id,
+                Vendor.name.ilike(f"%{vendor_name}%"),
+            )
+        )
+        return result.scalars().first()
+
+    async def _resolve_or_create_vendor(
+        self,
+        event_id: str,
+        vendor_name: str,
+        vendor_category: Optional[str] = None,
+        vendor_notes: Optional[str] = None,
+        db: AsyncSession = None,
+        contact_info: Optional[str] = None,
+    ) -> str:
+        """Find existing vendor by name and update it, or create a new one. Returns vendor ID."""
+        existing = await self._find_vendor_by_name(event_id, vendor_name, db)
+
+        if existing:
+            if vendor_category and not existing.category:
+                existing.category = vendor_category
+            if contact_info:
+                existing.contact_info = contact_info
+            if vendor_notes:
+                if existing.notes:
+                    if vendor_notes not in existing.notes:
+                        existing.notes = f"{existing.notes}\n{vendor_notes}"
+                else:
+                    existing.notes = vendor_notes
+            await db.flush()
+            return existing.id
+
+        new_vendor = Vendor(
+            event_id=event_id,
+            name=vendor_name,
+            category=vendor_category or "other",
+            contact_info=contact_info,
+            notes=vendor_notes,
+        )
+        db.add(new_vendor)
+        await db.flush()
+        return new_vendor.id
+
+    async def _update_vendor_by_name(
+        self,
+        event_id: str,
+        data: dict,
+        db: AsyncSession,
+    ) -> Optional[str]:
+        """Update a vendor record found by name. Returns vendor ID or None if not found."""
+        vendor_name = data.get("name")
+        if not vendor_name:
+            return None
+
+        existing = await self._find_vendor_by_name(event_id, vendor_name, db)
+        if not existing:
+            return None
+
+        if data.get("notes"):
+            if existing.notes:
+                if data["notes"] not in existing.notes:
+                    existing.notes = f"{existing.notes}\n{data['notes']}"
+            else:
+                existing.notes = data["notes"]
+        if data.get("contact_info"):
+            existing.contact_info = data["contact_info"]
+        if data.get("category"):
+            existing.category = data["category"]
+
+        await db.commit()
+        await db.refresh(existing)
+        return existing.id
     
     async def _update_payment(
         self,
@@ -286,7 +526,55 @@ class ExtractionService:
         await db.commit()
         await db.refresh(payment)
         return payment.id
-    
+
+    async def _find_and_update_payment(
+        self,
+        event_id: str,
+        data: dict,
+        db: AsyncSession,
+    ) -> bool:
+        """Find an existing payment by vendor name + amount and update its metadata (method, notes)."""
+        vendor_name = data.get("vendor_name")
+        raw_amount = data.get("amount_paid") or data.get("amount") or 0
+        try:
+            target_amount = float(str(raw_amount))
+        except (ValueError, TypeError):
+            target_amount = 0
+
+        if not vendor_name or target_amount <= 0:
+            return False
+
+        vendor = await self._find_vendor_by_name(event_id, vendor_name, db)
+        if not vendor:
+            return False
+
+        result = await db.execute(
+            select(Payment).where(
+                Payment.event_id == event_id,
+                Payment.vendor_id == vendor.id,
+                Payment.amount == target_amount,
+            )
+        )
+        payment = result.scalars().first()
+        if not payment:
+            return False
+
+        if data.get("method"):
+            payment.method = data["method"]
+        if data.get("notes"):
+            existing_notes = payment.notes or ""
+            new_note = data["notes"]
+            if new_note not in existing_notes:
+                payment.notes = f"{existing_notes}; {new_note}".strip("; ")
+        if data.get("payment_date") and not payment.paid_date:
+            if isinstance(data["payment_date"], str):
+                payment.paid_date = date.fromisoformat(data["payment_date"])
+            else:
+                payment.paid_date = data["payment_date"]
+
+        await db.commit()
+        return True
+
     def _infer_vendor_category(self, vendor_name: str) -> str | None:
         """Infer vendor category from common vendor type names."""
         if not vendor_name:
@@ -433,27 +721,23 @@ class ExtractionService:
         if not vendor_category and vendor_name:
             vendor_category = self._infer_vendor_category(vendor_name)
         
-        if vendor_name:
-            result = await db.execute(
-                select(Vendor).where(
-                    Vendor.event_id == event_id,
-                    Vendor.name.ilike(f"%{vendor_name}%"),
-                )
-            )
-            vendor = result.scalar_one_or_none()
-            if vendor:
-                vendor_id = vendor.id
-            else:
-                new_vendor = Vendor(
-                    event_id=event_id,
-                    name=vendor_name,
-                    category=vendor_category or "other",
-                )
-                db.add(new_vendor)
-                await db.flush()
-                vendor_id = new_vendor.id
+        vendor_notes = data.get("vendor_notes")
         
-        amount = data.get("amount_paid") or data.get("amount") or 0
+        if vendor_name:
+            vendor_id = await self._resolve_or_create_vendor(
+                event_id, vendor_name, vendor_category, vendor_notes, db
+            )
+            if vendor_id and not vendor_category:
+                v_res = await db.execute(select(Vendor).where(Vendor.id == vendor_id))
+                v_obj = v_res.scalar_one_or_none()
+                if v_obj and v_obj.category:
+                    vendor_category = v_obj.category
+        
+        raw_amount = data.get("amount_paid") or data.get("amount") or 0
+        try:
+            amount = Decimal(str(raw_amount))
+        except Exception:
+            amount = Decimal("0")
         remaining_balance = data.get("remaining_balance") or 0
         
         due_date = None
@@ -474,56 +758,118 @@ class ExtractionService:
                 paid_date = date.fromisoformat(data["paid_date"])
             else:
                 paid_date = data["paid_date"]
-        elif amount and amount > 0:
+        elif amount and amount > 0 and not due_date:
             paid_date = date.today()
         
         description = data.get("description") or ""
         if not description and vendor_name:
             description = f"Payment to {vendor_name}"
         
-        payment = Payment(
-            event_id=event_id,
-            vendor_id=vendor_id,
-            amount=amount,
-            paid_date=paid_date,
-            due_date=None,
-            method=data.get("method"),
-            notes=description,
-        )
-        db.add(payment)
-        await db.flush()
-        
+        primary_due_date = due_date if not paid_date else None
+
         remaining_amount = 0
         try:
             remaining_amount = float(remaining_balance) if remaining_balance else 0
         except (ValueError, TypeError):
             remaining_amount = 0
-        
-        if remaining_amount > 0:
-            pending_payment = Payment(
+
+        skip_primary = (float(amount) == 0 and remaining_amount > 0)
+
+        # Guard: never create a $0 payment record
+        if float(amount) == 0 and remaining_amount == 0:
+            await db.commit()
+            return ""
+
+        payment = None
+        if not skip_primary:
+            # Check for duplicate: same vendor, same amount, same paid_date
+            if vendor_id and paid_date and float(amount) > 0:
+                dup_check = await db.execute(
+                    select(Payment).where(
+                        Payment.event_id == event_id,
+                        Payment.vendor_id == vendor_id,
+                        Payment.amount == amount,
+                        Payment.paid_date == paid_date,
+                    )
+                )
+                existing_paid = dup_check.scalars().first()
+                if existing_paid:
+                    # Update metadata on existing instead of creating duplicate
+                    if data.get("method") and not existing_paid.method:
+                        existing_paid.method = data["method"]
+                    if description and existing_paid.notes and description not in existing_paid.notes:
+                        existing_paid.notes = f"{existing_paid.notes}; {description}"
+                    await db.commit()
+                    await db.refresh(existing_paid)
+                    return existing_paid.id
+
+            payment = Payment(
                 event_id=event_id,
                 vendor_id=vendor_id,
-                amount=remaining_amount,
-                paid_date=None,
-                due_date=due_date,
-                method=None,
-                notes=f"Remaining balance to {vendor_name or 'vendor'}",
+                amount=amount,
+                paid_date=paid_date,
+                due_date=primary_due_date,
+                method=data.get("method"),
+                notes=description,
             )
-            db.add(pending_payment)
-            
-            if due_date:
+            db.add(payment)
+            await db.flush()
+
+            if primary_due_date and not paid_date and float(amount) > 0:
                 await self._create_payment_reminder_task(
                     event_id=event_id,
                     vendor_name=vendor_name or "Vendor",
-                    amount=remaining_amount,
-                    due_date=due_date,
+                    amount=float(amount),
+                    due_date=primary_due_date,
                     db=db,
+                    vendor_id=vendor_id,
+                    vendor_category=vendor_category,
                 )
-        
+
+        if remaining_amount > 0 and vendor_id:
+            # Check if a pending payment for this vendor+amount already exists
+            pending_dup = await db.execute(
+                select(Payment).where(
+                    Payment.event_id == event_id,
+                    Payment.vendor_id == vendor_id,
+                    Payment.amount == remaining_amount,
+                    Payment.paid_date.is_(None),
+                )
+            )
+            existing_pending = pending_dup.scalars().first()
+
+            if not existing_pending:
+                pending_due_date = due_date
+                pending_payment = Payment(
+                    event_id=event_id,
+                    vendor_id=vendor_id,
+                    amount=remaining_amount,
+                    paid_date=None,
+                    due_date=pending_due_date,
+                    method=None,
+                    notes=f"Remaining balance to {vendor_name or 'vendor'}",
+                )
+                db.add(pending_payment)
+
+                if pending_due_date and remaining_amount > 0:
+                    await self._create_payment_reminder_task(
+                        event_id=event_id,
+                        vendor_name=vendor_name or "Vendor",
+                        amount=remaining_amount,
+                        due_date=pending_due_date,
+                        db=db,
+                        vendor_id=vendor_id,
+                        vendor_category=vendor_category,
+                    )
+
+                if not payment:
+                    payment = pending_payment
+
         await db.commit()
-        await db.refresh(payment)
+        if payment:
+            await db.refresh(payment)
         
-        return payment.id
+        return payment.id if payment else ""
     
     async def _create_task(
         self,
@@ -555,8 +901,46 @@ class ExtractionService:
             due_date=due_date,
             status=TaskStatus.PENDING,
             priority=priority,
+            vendor_category=data.get("vendor_category"),
         )
         db.add(task)
+        await db.commit()
+        await db.refresh(task)
+        return task.id
+    
+    async def _update_task_by_id(
+        self,
+        task_id: str,
+        data: dict,
+        db: AsyncSession,
+    ) -> str:
+        """Update an existing task's fields."""
+        from app.models.task import TaskPriority
+        
+        result = await db.execute(select(Task).where(Task.id == task_id))
+        task = result.scalar_one_or_none()
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+        
+        if "title" in data and data["title"]:
+            task.title = data["title"]
+        if "description" in data and data["description"] is not None:
+            task.description = data["description"]
+        if "due_date" in data:
+            dd = data["due_date"]
+            if isinstance(dd, str):
+                dd = date.fromisoformat(dd)
+            task.due_date = dd
+        if "priority" in data:
+            priority_map = {
+                "low": TaskPriority.LOW,
+                "medium": TaskPriority.MEDIUM,
+                "high": TaskPriority.HIGH,
+            }
+            task.priority = priority_map.get(data["priority"], task.priority)
+        if "vendor_category" in data:
+            task.vendor_category = data["vendor_category"]
+        
         await db.commit()
         await db.refresh(task)
         return task.id
@@ -568,21 +952,35 @@ class ExtractionService:
         amount: float,
         due_date: date,
         db: AsyncSession,
+        vendor_id: str | None = None,
+        vendor_category: str | None = None,
     ) -> str:
-        """Auto-create a task to remind about an upcoming payment."""
+        """Auto-create a task to remind about an upcoming payment, unless one already exists."""
         from app.models.task import TaskStatus, TaskPriority
-        
+
+        expected_title = f"Payment due: ${amount:,.0f} to {vendor_name}"
+        dup = await db.execute(
+            select(Task).where(
+                Task.event_id == event_id,
+                Task.title == expected_title,
+                Task.status == TaskStatus.PENDING,
+            )
+        )
+        if dup.scalars().first():
+            return ""
+
         task = Task(
             event_id=event_id,
-            title=f"Payment due: ${amount:,.0f} to {vendor_name}",
+            vendor_id=vendor_id,
+            vendor_category=vendor_category,
+            title=expected_title,
             description=f"Reminder: ${amount:,.2f} payment due to {vendor_name}",
             due_date=due_date,
             status=TaskStatus.PENDING,
             priority=TaskPriority.HIGH,
         )
         db.add(task)
-        await db.commit()
-        await db.refresh(task)
+        await db.flush()
         return task.id
     
     async def _create_calendar_event(
@@ -626,18 +1024,17 @@ class ExtractionService:
         data: dict,
         db: AsyncSession,
     ) -> str:
-        """Create a vendor from extracted data."""
-        vendor = Vendor(
+        """Create or update a vendor. Always checks for duplicates first."""
+        vendor_id = await self._resolve_or_create_vendor(
             event_id=event_id,
-            name=data.get("name", "Unknown Vendor"),
-            category=data.get("category"),
+            vendor_name=data.get("name", "Unknown Vendor"),
+            vendor_category=data.get("category"),
+            vendor_notes=data.get("notes"),
+            db=db,
             contact_info=data.get("contact_info"),
-            notes=data.get("notes"),
         )
-        db.add(vendor)
         await db.commit()
-        await db.refresh(vendor)
-        return vendor.id
+        return vendor_id
     
     async def _handle_sub_event_update(
         self,
@@ -764,6 +1161,11 @@ class ExtractionService:
         
         if data.get("name"):
             event.name = data["name"]
+        if data.get("event_date"):
+            event_date_val = data["event_date"]
+            if isinstance(event_date_val, str):
+                event_date_val = date.fromisoformat(event_date_val)
+            event.event_date = event_date_val
         if data.get("start_date"):
             start_date = data["start_date"]
             if isinstance(start_date, str):
@@ -849,14 +1251,7 @@ class ExtractionService:
         query = select(Payment).where(Payment.event_id == event_id)
         
         if filters.get("vendor_name"):
-            vendor_name = filters["vendor_name"]
-            vendor_result = await db.execute(
-                select(Vendor).where(
-                    Vendor.event_id == event_id,
-                    Vendor.name.ilike(f"%{vendor_name}%"),
-                )
-            )
-            vendor = vendor_result.scalar_one_or_none()
+            vendor = await self._find_vendor_by_name(event_id, filters["vendor_name"], db)
             if vendor:
                 query = query.where(Payment.vendor_id == vendor.id)
         

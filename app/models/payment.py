@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, date
 from decimal import Decimal
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, List, TYPE_CHECKING
 
 from sqlalchemy import String, Text, Date, ForeignKey, Numeric
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -11,6 +11,7 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.event import Event
     from app.models.vendor import Vendor
+    from app.models.attachment import Attachment
 
 
 class Payment(Base):
@@ -42,3 +43,7 @@ class Payment(Base):
     
     event: Mapped["Event"] = relationship("Event", back_populates="payments")
     vendor: Mapped[Optional["Vendor"]] = relationship("Vendor", back_populates="payments")
+    attachments: Mapped[List["Attachment"]] = relationship(
+        "Attachment",
+        back_populates="payment",
+    )

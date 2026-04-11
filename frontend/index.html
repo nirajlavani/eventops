@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EventOps AI</title>
   <link rel="stylesheet" href="/static/css/branding.css">
-  <link rel="stylesheet" href="/static/css/glassmorphism.css">
+  <link rel="stylesheet" href="/static/css/glassmorphism.css?v=8">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -49,9 +49,9 @@
           <i class="fas fa-dollar-sign"></i>
           <span class="nav-text">PAYMENTS</span>
         </button>
-        <button class="nav-btn" data-view="tasks">
-          <i class="fas fa-check-circle"></i>
-          <span class="nav-text">TASKS</span>
+        <button class="nav-btn" data-view="files">
+          <i class="fas fa-folder-open"></i>
+          <span class="nav-text">FILES</span>
         </button>
       </nav>
     </div>
@@ -97,48 +97,28 @@
               </div>
             </div>
 
-            <!-- 3-Column Dashboard Layout -->
-            <div class="dashboard-columns">
-              <!-- Column 1: Tasks -->
-              <div class="dashboard-column">
-                <div class="column-content">
-                  <div class="task-list-simple" id="dashboardTasks">
-                    <div class="task-item-simple">
-                      <span class="task-checkbox"></span>
-                      <span class="task-text">No tasks yet</span>
-                    </div>
-                  </div>
+            <!-- Kanban Task Board -->
+            <div class="kanban-board" id="kanbanBoard">
+              <div class="kanban-column" data-status="pending">
+                <div class="kanban-column-header">
+                  <span class="kanban-column-title">To Do</span>
+                  <span class="kanban-column-count" id="kanban-count-pending">0</span>
                 </div>
+                <div class="kanban-cards" id="kanban-pending"></div>
               </div>
-
-              <!-- Column Divider -->
-              <div class="column-divider"></div>
-
-              <!-- Column 2: Payments -->
-              <div class="dashboard-column">
-                <div class="column-content">
-                  <div class="payment-list-simple" id="dashboardPayments">
-                    <div class="payment-item-simple">
-                      <span class="payment-vendor">No payments yet</span>
-                      <span class="payment-amount"></span>
-                    </div>
-                  </div>
+              <div class="kanban-column" data-status="in_progress">
+                <div class="kanban-column-header">
+                  <span class="kanban-column-title">In Progress</span>
+                  <span class="kanban-column-count" id="kanban-count-in_progress">0</span>
                 </div>
+                <div class="kanban-cards" id="kanban-in_progress"></div>
               </div>
-
-              <!-- Column Divider -->
-              <div class="column-divider"></div>
-
-              <!-- Column 3: Schedule -->
-              <div class="dashboard-column">
-                <div class="column-content">
-                  <div class="schedule-list-simple" id="dashboardSchedule">
-                    <div class="schedule-item-simple">
-                      <span class="schedule-name">No upcoming events</span>
-                      <span class="schedule-date"></span>
-                    </div>
-                  </div>
+              <div class="kanban-column" data-status="completed">
+                <div class="kanban-column-header">
+                  <span class="kanban-column-title">Done</span>
+                  <span class="kanban-column-count" id="kanban-count-completed">0</span>
                 </div>
+                <div class="kanban-cards" id="kanban-completed"></div>
               </div>
             </div>
           </div>
@@ -218,12 +198,49 @@
         </div>
       </div>
 
-      <!-- Tasks View -->
-      <div id="view-tasks" class="view-content hidden">
+      <!-- Files View -->
+      <div id="view-files" class="view-content hidden">
         <div class="main-content-v2">
-          <div class="task-list-full" id="allTasksList">
+          <!-- File Upload Drop Zone -->
+          <div class="file-drop-zone" id="fileDropZone">
+            <i class="fas fa-cloud-upload-alt"></i>
+            <p>Drag & drop files here or <label for="fileInput" class="file-browse-link">browse</label></p>
+            <span class="file-drop-hint">PDF, Images, Documents up to 25 MB</span>
+            <input type="file" id="fileInput" multiple hidden accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt">
+          </div>
+
+          <!-- File Toolbar -->
+          <div class="file-toolbar">
+            <div class="file-toolbar-left">
+              <select class="select select-sm" id="fileCategoryFilter" onchange="filterFiles()">
+                <option value="">All Categories</option>
+                <option value="contract">Contracts</option>
+                <option value="receipt">Receipts</option>
+                <option value="invoice">Invoices</option>
+                <option value="photo">Photos</option>
+                <option value="other">Other</option>
+              </select>
+              <select class="select select-sm" id="fileVendorFilter" onchange="filterFiles()">
+                <option value="">All Vendors</option>
+              </select>
+            </div>
+            <div class="file-toolbar-right">
+              <select class="select select-sm" id="fileSortBy" onchange="filterFiles()">
+                <option value="created_at">Date Added</option>
+                <option value="original_filename">Name</option>
+                <option value="file_size">Size</option>
+              </select>
+              <button class="btn btn-ghost btn-sm" id="fileSortOrderBtn" onclick="toggleFileSortOrder()" title="Toggle sort order">
+                <i class="fas fa-sort-amount-down" id="fileSortOrderIcon"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- File Grid -->
+          <div class="file-grid" id="fileGrid">
             <div class="empty-state-v2">
-              <p>No tasks yet</p>
+              <div class="empty-state-icon"><i class="fas fa-folder-open"></i></div>
+              <p>No files yet. Upload contracts, receipts, or photos.</p>
             </div>
           </div>
         </div>
@@ -484,6 +501,169 @@
     </div>
   </div>
 
-  <script src="/static/js/app.js"></script>
+  <!-- Edit File Modal -->
+  <div class="modal-overlay" id="editFileModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Edit File</h2>
+        <button class="btn btn-ghost btn-sm" onclick="hideEditFileModal()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <form onsubmit="saveFileChanges(event)">
+        <div class="input-group">
+          <label>Description</label>
+          <input type="text" class="input" id="editFileDescription" placeholder="e.g., Catering contract signed copy">
+        </div>
+        <div class="input-group">
+          <label>Category</label>
+          <select class="select" id="editFileCategory">
+            <option value="">None</option>
+            <option value="contract">Contract</option>
+            <option value="receipt">Receipt</option>
+            <option value="invoice">Invoice</option>
+            <option value="photo">Photo</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label>Linked Vendor</label>
+          <select class="select" id="editFileVendor">
+            <option value="">None</option>
+          </select>
+        </div>
+        <div class="flex-between mt-5">
+          <button type="button" class="btn btn-secondary" onclick="hideEditFileModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Image Lightbox -->
+  <div class="image-lightbox" id="imageLightbox" onclick="closeLightbox()">
+    <button class="lightbox-close" onclick="closeLightbox()"><i class="fas fa-times"></i></button>
+    <img id="lightboxImage" src="" alt="Preview">
+  </div>
+
+  <!-- File Preview Modal (PDF / Document) -->
+  <div class="file-preview-modal" id="filePreviewModal">
+    <div class="file-preview-header">
+      <span class="file-preview-title" id="filePreviewTitle">Document Preview</span>
+      <button class="btn btn-ghost btn-sm" onclick="closeFilePreview()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="file-preview-body">
+      <iframe id="filePreviewFrame" src="" frameborder="0"></iframe>
+    </div>
+  </div>
+
+  <!-- Task Detail Popup -->
+  <div class="modal-overlay" id="taskDetailModal">
+    <div class="modal task-detail-modal">
+      <div class="modal-header">
+        <h2 id="taskDetailTitle">Task Details</h2>
+        <button class="btn btn-ghost btn-sm" onclick="closeTaskDetail()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="task-detail-body">
+        <div class="task-detail-columns">
+          <!-- Left column: metadata -->
+          <div class="task-detail-sidebar">
+            <div class="task-detail-section">
+              <span class="task-detail-label">Status</span>
+              <span class="task-detail-value" id="taskDetailStatus"></span>
+            </div>
+            <div class="task-detail-section">
+              <span class="task-detail-label">Priority</span>
+              <select id="taskDetailPriority" class="task-detail-select"></select>
+            </div>
+            <div class="task-detail-section">
+              <span class="task-detail-label">Label</span>
+              <select id="taskDetailLabelSelect" class="task-detail-select">
+                <option value="">None</option>
+              </select>
+            </div>
+            <div class="task-detail-section">
+              <span class="task-detail-label">Deadline</span>
+              <div class="task-deadline-inputs">
+                <input type="date" id="taskDetailDueDate" class="task-detail-input">
+                <input type="time" id="taskDetailDueTime" class="task-detail-input task-detail-time-input">
+                <label class="task-allday-label">
+                  <input type="checkbox" id="taskDetailAllDay"> All day
+                </label>
+              </div>
+            </div>
+            <div class="task-detail-section" id="taskDetailVendorSection" style="display:none;">
+              <span class="task-detail-label">Vendor</span>
+              <span class="task-detail-value" id="taskDetailVendor"></span>
+            </div>
+            <div class="task-detail-section">
+              <span class="task-detail-label">Assignee</span>
+              <div class="assignee-pill-input" id="assigneePillInput">
+                <span class="assignee-pills" id="assigneePills"></span>
+                <input type="text" id="assigneeTextInput" class="assignee-text" placeholder="Type a name and press Enter">
+              </div>
+            </div>
+          </div>
+          <!-- Right column: description -->
+          <div class="task-detail-main">
+            <div class="task-detail-section task-detail-section-grow">
+              <span class="task-detail-label">Description</span>
+              <div class="task-desc-editor">
+                <div class="task-desc-toolbar">
+                  <button type="button" class="desc-tool-btn" onclick="execDescCmd('bold')" title="Bold"><i class="fas fa-bold"></i></button>
+                  <button type="button" class="desc-tool-btn" onclick="execDescCmd('italic')" title="Italic"><i class="fas fa-italic"></i></button>
+                  <button type="button" class="desc-tool-btn" onclick="execDescCmd('underline')" title="Underline"><i class="fas fa-underline"></i></button>
+                  <span class="desc-tool-divider"></span>
+                  <button type="button" class="desc-tool-btn" onclick="execDescCmd('insertUnorderedList')" title="Bullet List"><i class="fas fa-list-ul"></i></button>
+                  <button type="button" class="desc-tool-btn" onclick="execDescCmd('insertOrderedList')" title="Numbered List"><i class="fas fa-list-ol"></i></button>
+                </div>
+                <div class="task-detail-description" id="taskDetailDescription" contenteditable="true"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Calendar Event Detail Popup -->
+  <div class="modal-overlay" id="calendarDetailModal">
+    <div class="modal calendar-detail-modal">
+      <div class="modal-header">
+        <h2 id="calDetailTitle">Event Details</h2>
+        <button class="btn btn-ghost btn-sm" onclick="closeCalendarDetail()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="calendar-detail-body">
+        <div class="calendar-detail-columns">
+          <div class="calendar-detail-sidebar">
+            <div class="task-detail-section">
+              <span class="task-detail-label">Date</span>
+              <span class="task-detail-value" id="calDetailDate"></span>
+            </div>
+            <div class="task-detail-section">
+              <span class="task-detail-label">Time</span>
+              <span class="task-detail-value" id="calDetailTime"></span>
+            </div>
+            <div class="task-detail-section">
+              <span class="task-detail-label">Location</span>
+              <span class="task-detail-value" id="calDetailLocation"></span>
+            </div>
+          </div>
+          <div class="calendar-detail-main">
+            <div class="task-detail-section task-detail-section-grow">
+              <span class="task-detail-label">Notes</span>
+              <div class="task-detail-description" id="calDetailNotes" contenteditable="true"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js?v=8"></script>
 </body>
 </html>

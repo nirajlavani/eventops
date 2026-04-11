@@ -1,15 +1,16 @@
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, time
 from typing import Optional, TYPE_CHECKING
 from enum import Enum as PyEnum
 
-from sqlalchemy import String, Text, Date, ForeignKey, Enum
+from sqlalchemy import String, Text, Date, Time, ForeignKey, Enum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.event import Event
+    from app.models.vendor import Vendor
 
 
 class TaskStatus(str, PyEnum):
@@ -41,9 +42,19 @@ class Task(Base):
         ForeignKey("events.id", ondelete="CASCADE"),
         nullable=False,
     )
+    vendor_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("vendors.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    vendor_category: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True
+    )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    assignee: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    due_time: Mapped[Optional[time]] = mapped_column(Time, nullable=True)
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus),
         default=TaskStatus.PENDING,
@@ -61,3 +72,4 @@ class Task(Base):
     )
     
     event: Mapped["Event"] = relationship("Event", back_populates="tasks")
+    vendor: Mapped[Optional["Vendor"]] = relationship("Vendor")

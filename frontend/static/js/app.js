@@ -22,6 +22,7 @@ let isChatHovered = false;
 let isAITyping = false; // Prevent collapse while AI is responding
 let isChatFullscreen = false; // Fullscreen mode
 const CHAT_COLLAPSE_DELAY = 5000; // 5 seconds
+let fileSortOrder = 'desc'; // For files view
 let collapsedPromptIndex = 0;
 
 const COLLAPSED_PROMPTS = [
@@ -56,6 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupCreateEventForm();
   setupChatAutoCollapse();
   setupWelcomeCardHover();
+  setupFileDragDrop();
 });
 
 function setupWelcomeCardHover() {
@@ -339,8 +341,9 @@ function refreshCurrentView() {
       if (currentEventId) loadDashboardV2(); 
       break;
     case 'payments': loadPaymentsV2(); break;
-    case 'tasks': loadTasksV2(); break;
+    case 'tasks': break;
     case 'calendar': loadCalendarV2(); break;
+    case 'files': loadFilesV2(); break;
   }
 }
 
@@ -484,7 +487,7 @@ function renderUpcomingItems(payments, calendar) {
       items.push({
         title: displayTitle,
         type: 'payment',
-        date: new Date(p.due_date)
+        date: parseDateLocal(p.due_date)
       });
     }
   });
@@ -494,7 +497,7 @@ function renderUpcomingItems(payments, calendar) {
       items.push({
         title: c.title,
         type: 'event',
-        date: new Date(c.event_date)
+        date: parseDateLocal(c.event_date)
       });
     }
   });
@@ -531,7 +534,8 @@ function renderRecentPayments(payments) {
   
   container.innerHTML = payments.map((p, i) => {
     const displayName = p.vendor_name || p.description || 'Payment';
-    const amount = parseFloat(p.amount_paid || p.amount || 0);
+    const rawPaid = parseFloat(p.amount_paid || 0);
+    const amount = rawPaid > 0 ? rawPaid : parseFloat(p.amount || 0);
     return `
     <div class="item-row">
       <div class="item-icon ${COLORS[i % COLORS.length]}">
@@ -539,7 +543,7 @@ function renderRecentPayments(payments) {
       </div>
       <div class="item-content">
         <div class="item-title">${escapeHtml(displayName)}</div>
-        <div class="item-subtitle">${p.paid_date ? formatShortDate(new Date(p.paid_date)) : 'Pending'} · $${formatNumber(amount)}</div>
+        <div class="item-subtitle">${p.paid_date ? formatShortDate(parseDateLocal(p.paid_date)) : 'Pending'} · $${formatNumber(amount)}</div>
       </div>
       ${p.paid_date ? '<span class="tag tag-success">Paid</span>' : '<span class="tag tag-warning">Due</span>'}
     </div>
@@ -566,7 +570,7 @@ function renderOpenTasks(tasks) {
       </div>
       <div class="item-content">
         <div class="item-title">${escapeHtml(t.title)}</div>
-        ${t.due_date ? `<div class="item-subtitle">Due: ${formatShortDate(new Date(t.due_date))}</div>` : ''}
+        ${t.due_date ? `<div class="item-subtitle">Due: ${formatShortDate(parseDateLocal(t.due_date))}</div>` : ''}
       </div>
       <span class="tag ${getPriorityTagClass(t.priority)}">${t.priority}</span>
     </div>
@@ -605,7 +609,7 @@ function renderEventCard(event, index) {
   const dateDisplay = event.start_date && event.end_date 
     ? formatDateRange(event.start_date, event.end_date)
     : event.event_date 
-      ? formatShortDate(new Date(event.event_date))
+      ? formatShortDate(parseDateLocal(event.event_date))
       : 'No date';
   
   const locationDisplay = event.location_city || event.location || 'No location';
@@ -798,8 +802,8 @@ async function loadPayments() {
         <div class="item-content">
           <div class="item-title">$${formatNumber(parseFloat(p.amount))}</div>
           <div class="item-subtitle">
-            ${p.paid_date ? `Paid: ${formatShortDate(new Date(p.paid_date))}` : ''}
-            ${p.due_date ? ` · Due: ${formatShortDate(new Date(p.due_date))}` : ''}
+            ${p.paid_date ? `Paid: ${formatShortDate(parseDateLocal(p.paid_date))}` : ''}
+            ${p.due_date ? ` · Due: ${formatShortDate(parseDateLocal(p.due_date))}` : ''}
           </div>
         </div>
         ${p.paid_date ? '<span class="tag tag-success">Paid</span>' : '<span class="tag tag-warning">Pending</span>'}
@@ -848,7 +852,7 @@ async function loadTasks() {
         </div>
         <div class="item-content">
           <div class="item-title" style="${t.status === 'completed' ? 'text-decoration: line-through; opacity: 0.5;' : ''}">${escapeHtml(t.title)}</div>
-          ${t.due_date ? `<div class="item-subtitle">Due: ${formatShortDate(new Date(t.due_date))}</div>` : ''}
+          ${t.due_date ? `<div class="item-subtitle">Due: ${formatShortDate(parseDateLocal(t.due_date))}</div>` : ''}
         </div>
         <span class="tag ${getPriorityTagClass(t.priority)}">${t.priority}</span>
       </div>
@@ -896,7 +900,7 @@ async function loadCalendar() {
         </div>
         <div class="item-content">
           <div class="item-title">${escapeHtml(e.title)}</div>
-          <div class="item-subtitle">${formatShortDate(new Date(e.event_date))}${e.event_time ? ` at ${e.event_time}` : ''}</div>
+          <div class="item-subtitle">${formatShortDate(parseDateLocal(e.event_date))}${e.event_time ? ` at ${e.event_time}` : ''}</div>
         </div>
         ${e.location ? `<span class="item-subtitle"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(e.location)}</span>` : ''}
       </div>
@@ -930,19 +934,24 @@ async function submitCapture() {
   
   addToConversationHistory('user', text);
   
-  showTypingIndicator('Got it, let me process that...');
+  const typingMessages = [
+    'Got it, let me process that...',
+    'Working on it...',
+    'Configuring that for you...',
+    'Processing your request...',
+    'Let me see what I can do...',
+    'Almost there...',
+  ];
+  const shuffled = typingMessages.slice(0, -1).sort(() => Math.random() - 0.5);
+  shuffled.push('Almost there...');
   
-  setTimeout(() => {
-    if (isAITyping) updateTypingStatus('Analyzing your request...');
-  }, 3000);
+  showTypingIndicator(shuffled[0]);
   
-  setTimeout(() => {
-    if (isAITyping) updateTypingStatus('Processing details...');
-  }, 6000);
-  
-  setTimeout(() => {
-    if (isAITyping) updateTypingStatus('Almost there...');
-  }, 10000);
+  for (let i = 1; i < shuffled.length; i++) {
+    const msg = shuffled[i];
+    const delay = i * 3000;
+    setTimeout(() => { if (isAITyping) updateTypingStatus(msg); }, delay);
+  }
   
   try {
     const response = await fetch(`${API_BASE}/api/events/${currentEventId}/capture/extract`, {
@@ -1035,45 +1044,50 @@ function showExtractionWithMessage(result) {
   let html = `<div class="extraction-with-message">`;
   html += `<div class="assistant-message">${result.assistant_message}</div>`;
   
-  if (result.needs_confirmation) {
+  if (result.needs_confirmation && result.data && Object.keys(result.data).length > 0) {
     html += '<ul class="extraction-list">';
     for (const [key, value] of Object.entries(result.data)) {
       if (value !== null && value !== undefined && value !== '') {
-        const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-        html += `<li><strong>${label}:</strong> ${value}</li>`;
+        html += formatDataEntry(key, value);
       }
     }
     html += '</ul>';
-    
-    if (result.follow_up_question) {
-      html += `<div class="follow-up-question">${result.follow_up_question}</div>`;
-    }
-    
-    html += `<div class="confirm-actions">
-      <button class="btn btn-secondary btn-sm" onclick="cancelExtraction()">Cancel</button>
-      <button class="btn btn-primary btn-sm" onclick="confirmExtraction()">Save</button>
-    </div>`;
+  }
+  
+  if (result.follow_up_question) {
+    html += `<div class="follow-up-question"><strong>${result.follow_up_question}</strong></div>`;
   }
   
   html += `</div>`;
   addMessage(html, 'ai', true);
-  addToConversationHistory('assistant', result.assistant_message);
+  addToConversationHistory('assistant', result.assistant_message + (result.follow_up_question ? ' ' + result.follow_up_question : ''));
+  
+  // Auto-confirm in background if no follow-up question
+  if (result.needs_confirmation && !result.follow_up_question) {
+    autoConfirmExtraction();
+  }
 }
 
 async function autoConfirmExtraction() {
   if (!pendingExtraction) return;
   
   try {
+    const confirmPayload = {
+      log_id: pendingExtraction.log_id,
+      intent: pendingExtraction.intent,
+      action: pendingExtraction.action || 'create',
+      reference_id: pendingExtraction.reference_id,
+      data: pendingExtraction.data
+    };
+    
+    if (pendingExtraction.secondary_actions && pendingExtraction.secondary_actions.length > 0) {
+      confirmPayload.secondary_actions = pendingExtraction.secondary_actions;
+    }
+    
     const response = await fetch(`${API_BASE}/api/events/${currentEventId}/capture/confirm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        log_id: pendingExtraction.log_id,
-        intent: pendingExtraction.intent,
-        action: pendingExtraction.action || 'create',
-        reference_id: pendingExtraction.reference_id,
-        data: pendingExtraction.data
-      })
+      body: JSON.stringify(confirmPayload)
     });
     
     const confirmResult = await response.json();
@@ -1116,7 +1130,7 @@ function showQueryResults(queryResults) {
     for (const p of results.payments) {
       const vendor = p.vendor_name || 'Unknown vendor';
       const amount = p.amount ? `$${p.amount.toLocaleString()}` : '';
-      const date = p.paid_date ? new Date(p.paid_date).toLocaleDateString() : '';
+      const date = p.paid_date ? parseDateLocal(p.paid_date).toLocaleDateString() : '';
       html += `<div class="query-item">
         <div class="query-item-main">
           <span class="query-item-title">${vendor}</span>
@@ -1136,7 +1150,7 @@ function showQueryResults(queryResults) {
     for (const t of results.tasks) {
       const status = t.status || 'pending';
       const statusClass = status === 'completed' ? 'status-complete' : 'status-pending';
-      const dueDate = t.due_date ? new Date(t.due_date).toLocaleDateString() : '';
+      const dueDate = t.due_date ? parseDateLocal(t.due_date).toLocaleDateString() : '';
       html += `<div class="query-item">
         <div class="query-item-main">
           <span class="query-item-title">${t.title}</span>
@@ -1154,7 +1168,7 @@ function showQueryResults(queryResults) {
       <div class="query-section-title"><i class="fas fa-calendar"></i> Upcoming Events</div>
       <div class="query-items">`;
     for (const e of results.calendar_events) {
-      const eventDate = e.event_date ? new Date(e.event_date).toLocaleDateString() : '';
+      const eventDate = e.event_date ? parseDateLocal(e.event_date).toLocaleDateString() : '';
       const eventTime = e.event_time || '';
       html += `<div class="query-item">
         <div class="query-item-main">
@@ -1189,27 +1203,22 @@ function showQueryResults(queryResults) {
 
 function showExtractionResultWithFollowUp(result) {
   let html = `<div class="extraction-with-followup">`;
-  html += `<div style="margin-bottom: 8px;">Got it! Here's what I extracted:</div>`;
+  html += `<div style="margin-bottom: 8px;">Got it! Here's what I found:</div>`;
   html += '<ul class="extraction-list">';
   
   for (const [key, value] of Object.entries(result.data)) {
     if (value !== null && value !== undefined && value !== '') {
-      const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-      html += `<li><strong>${label}:</strong> ${value}</li>`;
+      html += formatDataEntry(key, value);
     }
   }
   
   html += '</ul>';
   
-  html += `<div class="follow-up-question">${result.follow_up_question}</div>`;
-  
-  html += `<div class="confirm-actions">
-    <button class="btn btn-secondary btn-sm" onclick="cancelExtraction()">Cancel</button>
-    <button class="btn btn-primary btn-sm" onclick="confirmExtraction()">Save Anyway</button>
-  </div>`;
+  html += `<div class="follow-up-question"><strong>${result.follow_up_question}</strong></div>`;
   
   html += `</div>`;
   addMessage(html, 'ai', true);
+  addToConversationHistory('assistant', 'Got it! Here\'s what I found. ' + result.follow_up_question);
 }
 
 function renderSubEventUpdatePreview(result) {
@@ -1220,50 +1229,47 @@ function renderSubEventUpdatePreview(result) {
   
   switch (action) {
     case 'add':
-      actionDescription = `Add new sub-event "${data.new_name || 'New Sub-Event'}"`;
+      actionDescription = `I'll add a new sub-event "${data.new_name || 'New Sub-Event'}"`;
       break;
     case 'cancel':
-      actionDescription = `Cancel sub-event "${data.sub_event_name}"`;
+      actionDescription = `I'll cancel the "${data.sub_event_name}" sub-event`;
       break;
     case 'reschedule':
-      actionDescription = `Reschedule "${data.sub_event_name}"`;
+      actionDescription = `I'll reschedule "${data.sub_event_name}"`;
       break;
     case 'update':
       if (data.new_name) {
-        actionDescription = `Change "${data.sub_event_name}" to "${data.new_name}"`;
+        actionDescription = `I'll change "${data.sub_event_name}" to "${data.new_name}"`;
       } else {
-        actionDescription = `Update "${data.sub_event_name}"`;
+        actionDescription = `I'll update "${data.sub_event_name}"`;
       }
       break;
     default:
-      actionDescription = `Update sub-event`;
+      actionDescription = `I'll update the sub-event`;
   }
   
   let html = `<div style="margin-bottom: 8px;">${actionDescription}</div>`;
-  html += '<ul class="extraction-list">';
   
-  if (data.new_date) {
-    html += `<li><strong>New Date:</strong> ${formatShortDate(new Date(data.new_date))}</li>`;
-  }
-  if (data.new_start_time) {
-    html += `<li><strong>Start Time:</strong> ${formatTime(data.new_start_time)}</li>`;
-  }
-  if (data.new_end_time) {
-    html += `<li><strong>End Time:</strong> ${formatTime(data.new_end_time)}</li>`;
-  }
-  if (data.new_location) {
-    html += `<li><strong>Location:</strong> ${escapeHtml(data.new_location)}</li>`;
+  const hasDetails = data.new_date || data.new_start_time || data.new_end_time || data.new_location;
+  if (hasDetails) {
+    html += '<ul class="extraction-list">';
+    if (data.new_date) {
+      html += `<li><strong>Date:</strong> ${formatShortDate(new Date(data.new_date))}</li>`;
+    }
+    if (data.new_start_time) {
+      html += `<li><strong>Time:</strong> ${formatTime(data.new_start_time)}</li>`;
+    }
+    if (data.new_end_time) {
+      html += `<li><strong>End Time:</strong> ${formatTime(data.new_end_time)}</li>`;
+    }
+    if (data.new_location) {
+      html += `<li><strong>Location:</strong> ${escapeHtml(data.new_location)}</li>`;
+    }
+    html += '</ul>';
   }
   
-  html += '</ul>';
-  
-  const confirmText = action === 'cancel' ? 'Confirm Cancel' : 'Confirm';
-  const confirmClass = action === 'cancel' ? 'btn-danger' : 'btn-primary';
-  
-  html += `<div class="confirm-actions">
-    <button class="btn btn-secondary btn-sm" onclick="cancelExtraction()">Cancel</button>
-    <button class="btn ${confirmClass} btn-sm" onclick="confirmExtraction()">${confirmText}</button>
-  </div>`;
+  // Auto-confirm this action
+  setTimeout(() => autoConfirmExtraction(), 100);
   
   return html;
 }
@@ -1271,46 +1277,40 @@ function renderSubEventUpdatePreview(result) {
 function renderEventUpdatePreview(result) {
   const data = result.data;
   
-  let html = `<div style="margin-bottom: 8px;">Update Event Details:</div>`;
+  let html = `<div style="margin-bottom: 8px;">I'll update your event details:</div>`;
   html += '<ul class="extraction-list">';
   
   for (const [key, value] of Object.entries(data)) {
     if (value != null && value !== '') {
-      html += `<li><strong>${formatLabel(key)}:</strong> ${formatValue(key, value)}</li>`;
+      html += formatDataEntry(key, value);
     }
   }
   
   html += '</ul>';
   
-  html += `<div class="confirm-actions">
-    <button class="btn btn-secondary btn-sm" onclick="cancelExtraction()">Cancel</button>
-    <button class="btn btn-primary btn-sm" onclick="confirmExtraction()">Save Changes</button>
-  </div>`;
+  // Auto-confirm this action
+  setTimeout(() => autoConfirmExtraction(), 100);
   
   return html;
 }
 
 function renderStandardExtractionPreview(result) {
-  let html = `<div style="margin-bottom: 8px;">Got it! Here's what I found:</div>`;
+  let html = `<div style="margin-bottom: 8px;">Got it! I'll save this for you:</div>`;
   html += '<ul class="extraction-list">';
   
   for (const [key, value] of Object.entries(result.data)) {
     if (value != null && value !== '') {
-      html += `<li><strong>${formatLabel(key)}:</strong> ${formatValue(key, value)}</li>`;
+      html += formatDataEntry(key, value);
     }
   }
   html += '</ul>';
   
   if (result.missing_fields?.length > 0) {
-    html += `<div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.8;">
-      Missing: ${result.missing_fields.join(', ')}
-    </div>`;
+    html += `<div class="follow-up-question"><strong>I'm missing some info: ${result.missing_fields.join(', ')}. Can you provide those details?</strong></div>`;
+  } else {
+    // Auto-confirm if no missing fields
+    setTimeout(() => autoConfirmExtraction(), 100);
   }
-  
-  html += `<div class="confirm-actions">
-    <button class="btn btn-secondary btn-sm" onclick="cancelExtraction()">Cancel</button>
-    <button class="btn btn-primary btn-sm" onclick="confirmExtraction()">Save</button>
-  </div>`;
   
   return html;
 }
@@ -1321,16 +1321,22 @@ async function confirmExtraction() {
   showTypingIndicator('Saving...');
   
   try {
+    const confirmPayload = {
+      log_id: pendingExtraction.log_id,
+      intent: pendingExtraction.intent,
+      action: pendingExtraction.action || 'create',
+      reference_id: pendingExtraction.reference_id,
+      data: pendingExtraction.data
+    };
+    
+    if (pendingExtraction.secondary_actions && pendingExtraction.secondary_actions.length > 0) {
+      confirmPayload.secondary_actions = pendingExtraction.secondary_actions;
+    }
+    
     const response = await fetch(`${API_BASE}/api/events/${currentEventId}/capture/confirm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        log_id: pendingExtraction.log_id,
-        intent: pendingExtraction.intent,
-        action: pendingExtraction.action || 'create',
-        reference_id: pendingExtraction.reference_id,
-        data: pendingExtraction.data
-      })
+      body: JSON.stringify(confirmPayload)
     });
     
     hideTypingIndicator();
@@ -1876,6 +1882,12 @@ function formatShortDate(date) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function parseDateLocal(dateStr) {
+  if (!dateStr) return new Date();
+  const parts = dateStr.split('T')[0].split('-');
+  return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+}
+
 function formatLabel(key) {
   return key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 }
@@ -1889,6 +1901,34 @@ function formatValue(key, value) {
     return formatShortDate(new Date(value));
   }
   return escapeHtml(String(value));
+}
+
+function formatDataEntry(key, value) {
+  const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  if (Array.isArray(value)) {
+    let html = `<li><strong>${label}:</strong><ul>`;
+    value.forEach((item, i) => {
+      if (typeof item === 'object' && item !== null) {
+        const parts = Object.entries(item)
+          .filter(([, v]) => v != null && v !== '')
+          .map(([k, v]) => `${formatLabel(k)}: ${formatValue(k, v)}`)
+          .join(', ');
+        html += `<li>${parts}</li>`;
+      } else {
+        html += `<li>${escapeHtml(String(item))}</li>`;
+      }
+    });
+    html += '</ul></li>';
+    return html;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const parts = Object.entries(value)
+      .filter(([, v]) => v != null && v !== '')
+      .map(([k, v]) => `${formatLabel(k)}: ${formatValue(k, v)}`)
+      .join(', ');
+    return `<li><strong>${label}:</strong> ${parts}</li>`;
+  }
+  return `<li><strong>${label}:</strong> ${formatValue(key, value)}</li>`;
 }
 
 function escapeHtml(text) {
@@ -1939,23 +1979,16 @@ async function loadDashboardV2() {
   if (!currentEventId) return;
   
   try {
-    const [dashResponse, tasksResponse, calendarResponse, paymentsResponse, vendorsResponse, eventResponse] = await Promise.all([
+    const [dashResponse, vendorsResponse, eventResponse] = await Promise.all([
       fetch(`${API_BASE}/api/events/${currentEventId}/dashboard`),
-      fetch(`${API_BASE}/api/events/${currentEventId}/tasks`),
-      fetch(`${API_BASE}/api/events/${currentEventId}/calendar`),
-      fetch(`${API_BASE}/api/events/${currentEventId}/payments`),
       fetch(`${API_BASE}/api/events/${currentEventId}/vendors`),
       fetch(`${API_BASE}/api/events/${currentEventId}`)
     ]);
     
     const dashboard = await dashResponse.json();
-    const tasks = await tasksResponse.json();
-    const calendar = await calendarResponse.json();
-    const payments = await paymentsResponse.json();
     const vendors = await vendorsResponse.json();
     const event = await eventResponse.json();
     
-    // Subtle Stats
     const subeventsCount = event.sub_events?.length || 0;
     const vendorsCount = vendors.length;
     const totalPaid = parseFloat(dashboard.financial_summary?.total_paid || 0);
@@ -1971,58 +2004,11 @@ async function loadDashboardV2() {
     if (statPaid) statPaid.textContent = `$${formatNumber(totalPaid)}`;
     if (statPending) statPending.textContent = `$${formatNumber(totalPending)}`;
     
-    // 3-Column Layout
-    renderDashboardTasks(tasks);
-    renderDashboardPayments(payments);
-    renderDashboardSchedule(calendar, event.sub_events || []);
+    await loadTasksKanban();
     
   } catch (error) {
     console.error('Failed to load dashboard V2:', error);
   }
-}
-
-function renderDashboardTasks(tasks) {
-  const container = document.getElementById('dashboardTasks');
-  if (!container) return;
-  
-  const pendingTasks = tasks.filter(t => t.status !== 'completed').slice(0, 8);
-  
-  if (pendingTasks.length === 0) {
-    container.innerHTML = '<div class="task-item-simple"><span class="task-checkbox completed"></span><span class="task-text completed">All tasks complete!</span></div>';
-    return;
-  }
-  
-  container.innerHTML = pendingTasks.map(task => `
-    <div class="task-item-simple">
-      <span class="task-checkbox"></span>
-      <div>
-        <span class="task-text">${escapeHtml(task.title)}</span>
-        ${task.due_date ? `<div class="task-due">Due ${formatShortDate(new Date(task.due_date))}</div>` : ''}
-      </div>
-    </div>
-  `).join('');
-}
-
-function renderDashboardPayments(payments) {
-  const container = document.getElementById('dashboardPayments');
-  if (!container) return;
-  
-  const recentPayments = payments.slice(0, 8);
-  
-  if (recentPayments.length === 0) {
-    container.innerHTML = '<div class="payment-item-simple"><span class="payment-vendor">No payments yet</span></div>';
-    return;
-  }
-  
-  container.innerHTML = recentPayments.map(p => {
-    const displayName = p.vendor_name || p.description || 'Payment';
-    const amount = parseFloat(p.amount_paid || p.amount || 0);
-    return `
-    <div class="payment-item-simple">
-      <span class="payment-vendor">${escapeHtml(displayName)}</span>
-      <span class="payment-amount">$${formatNumber(amount)}</span>
-    </div>
-  `;}).join('');
 }
 
 function renderDashboardSchedule(calendar, subEvents) {
@@ -2031,7 +2017,6 @@ function renderDashboardSchedule(calendar, subEvents) {
   
   const items = [];
   
-  // Add sub-events
   subEvents.forEach(se => {
     if (se.date) {
       items.push({
@@ -2042,13 +2027,13 @@ function renderDashboardSchedule(calendar, subEvents) {
     }
   });
   
-  // Add calendar events
   calendar.forEach(c => {
     if (c.event_date) {
       items.push({
         name: c.title,
-        date: new Date(c.event_date),
-        type: 'calendar'
+        date: parseDateLocal(c.event_date),
+        type: 'calendar',
+        raw: c
       });
     }
   });
@@ -2061,51 +2046,66 @@ function renderDashboardSchedule(calendar, subEvents) {
     return;
   }
   
-  container.innerHTML = upcoming.map(item => `
-    <div class="schedule-item-simple">
+  container.innerHTML = upcoming.map(item => {
+    if (item.type === 'calendar' && item.raw) {
+      const calJson = escapeHtml(JSON.stringify(item.raw));
+      return `<div class="schedule-item-simple clickable" onclick="showCalendarEventDetail(this)" data-cal='${calJson}'>
+        <span class="schedule-name">${escapeHtml(item.name)}</span>
+        <span class="schedule-date">${formatShortDate(item.date)}</span>
+      </div>`;
+    }
+    return `<div class="schedule-item-simple">
       <span class="schedule-name">${escapeHtml(item.name)}</span>
       <span class="schedule-date">${formatShortDate(item.date)}</span>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 async function loadPaymentsV2() {
   if (!currentEventId) return;
-  
+
   try {
-    const [paymentsResponse, vendorsResponse] = await Promise.all([
+    const [paymentsResponse, vendorsResponse, attachmentsResponse] = await Promise.all([
       fetch(`${API_BASE}/api/events/${currentEventId}/payments`),
-      fetch(`${API_BASE}/api/events/${currentEventId}/vendors`)
+      fetch(`${API_BASE}/api/events/${currentEventId}/vendors`),
+      fetch(`${API_BASE}/api/events/${currentEventId}/attachments`),
     ]);
-    
+
     const payments = await paymentsResponse.json();
     const vendors = await vendorsResponse.json();
-    
-    // Render vendors
+    const attachments = await attachmentsResponse.json();
+
+    const vendorFiles = {};
+    const vendorPayments = {};
+    attachments.forEach(a => {
+      if (a.vendor_id) {
+        if (!vendorFiles[a.vendor_id]) vendorFiles[a.vendor_id] = [];
+        vendorFiles[a.vendor_id].push(a);
+      }
+    });
+    payments.forEach(p => {
+      if (p.vendor_id) {
+        if (!vendorPayments[p.vendor_id]) vendorPayments[p.vendor_id] = [];
+        vendorPayments[p.vendor_id].push(p);
+      }
+    });
+
     const vendorsContainer = document.getElementById('vendorsList');
     if (vendorsContainer) {
       if (vendors.length === 0) {
         vendorsContainer.innerHTML = '<div class="empty-state-v2"><p>No vendors yet</p></div>';
       } else {
-        vendorsContainer.innerHTML = vendors.map((v, i) => `
-          <div class="vendor-item-v2">
-            <div class="vendor-avatar" style="background: ${['#A0C9CB', '#FF6037', '#733635', '#F5F4ED'][i % 4]}">
-              ${v.name.charAt(0).toUpperCase()}
-            </div>
-            <div class="vendor-info">
-              <div class="vendor-name">${escapeHtml(v.name)}</div>
-              <div class="vendor-category">${escapeHtml(v.category || 'Vendor')}</div>
-            </div>
-          </div>
-        `).join('');
+        vendorsContainer.innerHTML = vendors.map((v, i) => {
+          const files = vendorFiles[v.id] || [];
+          const vPayments = vendorPayments[v.id] || [];
+          return renderExpandableVendorCard(v, i, files, vPayments);
+        }).join('');
       }
     }
-    
-    // Split payments into completed and pending
+
     const completedPayments = payments.filter(p => p.paid_date);
-    const pendingPayments = payments.filter(p => !p.paid_date && p.due_date);
-    
-    // Render completed payments
+    const pendingPayments = payments.filter(p => !p.paid_date);
+
     const paymentsContainer = document.getElementById('paymentsList');
     if (paymentsContainer) {
       if (completedPayments.length === 0) {
@@ -2113,20 +2113,20 @@ async function loadPaymentsV2() {
       } else {
         paymentsContainer.innerHTML = completedPayments.map(p => {
           const displayName = p.vendor_name || p.description || 'Payment';
-          const amount = parseFloat(p.amount_paid || p.amount || 0);
+          const rawPaid2 = parseFloat(p.amount_paid || 0);
+          const amount = rawPaid2 > 0 ? rawPaid2 : parseFloat(p.amount || 0);
           return `
           <div class="payment-item-v2">
             <div class="payment-details">
               <div class="payment-vendor-name">${escapeHtml(displayName)}</div>
-              <div class="payment-date">${p.paid_date ? formatShortDate(new Date(p.paid_date)) : ''}</div>
+              <div class="payment-date">${p.paid_date ? formatShortDate(parseDateLocal(p.paid_date)) : ''}</div>
             </div>
             <div class="payment-amount-v2">$${formatNumber(amount)}</div>
           </div>
         `;}).join('');
       }
     }
-    
-    // Render pending payments
+
     const pendingContainer = document.getElementById('pendingPaymentsList');
     if (pendingContainer) {
       if (pendingPayments.length === 0) {
@@ -2135,61 +2135,592 @@ async function loadPaymentsV2() {
         pendingContainer.innerHTML = pendingPayments.map(p => {
           const displayName = p.vendor_name || p.description || 'Payment due';
           const amount = parseFloat(p.amount || 0);
+          const dueText = p.due_date ? `Due ${formatShortDate(parseDateLocal(p.due_date))}` : 'Due date TBD';
           return `
           <div class="payment-item-v2">
             <div class="payment-details">
               <div class="payment-vendor-name">${escapeHtml(displayName)}</div>
-              <div class="payment-date">Due ${formatShortDate(new Date(p.due_date))}</div>
+              <div class="payment-date">${dueText}</div>
             </div>
             <div class="payment-amount-v2">$${formatNumber(amount)}</div>
           </div>
         `;}).join('');
       }
     }
-    
+
   } catch (error) {
     console.error('Failed to load payments V2:', error);
   }
 }
 
-async function loadTasksV2() {
+function renderExpandableVendorCard(vendor, index, files, payments) {
+  const fileCount = files.length;
+  const avatarColors = ['#A0C9CB', '#FF6037', '#733635', '#F5F4ED'];
+
+  const filesHtml = files.length > 0
+    ? files.map(f => renderVendorFileCard(f)).join('')
+    : '<div class="vendor-empty-hint">No files attached yet</div>';
+
+  const paymentsHtml = payments.length > 0
+    ? payments.map(p => renderVendorPaymentRow(p)).join('')
+    : '<div class="vendor-empty-hint">No payments recorded</div>';
+
+  const totalPaid = payments
+    .filter(p => !!p.paid_date)
+    .reduce((sum, p) => {
+      const paid = parseFloat(p.amount_paid || 0);
+      return sum + (paid > 0 ? paid : parseFloat(p.amount || 0));
+    }, 0);
+  const totalDue = payments
+    .filter(p => !p.paid_date)
+    .reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+
+  const paymentSummaryHtml = payments.length > 0
+    ? `<div class="vendor-payment-summary-stats">
+        <span class="vp-stat vp-stat-paid"><i class="fas fa-check-circle"></i> Paid: $${formatNumber(totalPaid)}</span>
+        <span class="vp-stat vp-stat-due"><i class="fas fa-exclamation-circle"></i> Due: $${formatNumber(totalDue)}</span>
+      </div>`
+    : '';
+
+  return `
+    <div class="vendor-item-v2 expandable" id="vendor-card-${vendor.id}">
+      <div class="vendor-card-header" onclick="toggleVendorCard('${vendor.id}')">
+        <div class="vendor-avatar" style="background: ${avatarColors[index % 4]}">
+          ${vendor.name.charAt(0).toUpperCase()}
+        </div>
+        <div class="vendor-info">
+          <div class="vendor-name">${escapeHtml(vendor.name)}</div>
+          <div class="vendor-category">${escapeHtml(vendor.category || 'Vendor')}</div>
+        </div>
+        <div class="vendor-header-right">
+          ${fileCount > 0 ? `<span class="vendor-file-count"><i class="fas fa-paperclip"></i> ${fileCount}</span>` : ''}
+          <i class="fas fa-chevron-down vendor-expand-icon" id="vendor-expand-icon-${vendor.id}"></i>
+        </div>
+      </div>
+
+      <div class="vendor-detail-panel" id="vendor-detail-${vendor.id}">
+        <div class="vendor-files-section">
+          <div class="vendor-section-header">
+            <span class="vendor-section-title"><i class="fas fa-folder-open"></i> Files</span>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); uploadFileForVendor('${vendor.id}')" title="Upload file">
+              <i class="fas fa-plus"></i> Upload
+            </button>
+          </div>
+          <div class="vendor-files-grid">${filesHtml}</div>
+        </div>
+
+        <div class="vendor-notes-section">
+          <div class="vendor-section-header">
+            <span class="vendor-section-title"><i class="fas fa-sticky-note"></i> Notes</span>
+          </div>
+          <textarea class="vendor-notes-input" id="vendor-notes-${vendor.id}"
+            placeholder="Add notes about this vendor..."
+            onblur="saveVendorNotes('${vendor.id}')">${vendor.notes ? escapeHtml(vendor.notes) : ''}</textarea>
+          ${vendor.contact_info ? `<div class="vendor-contact"><i class="fas fa-phone"></i> ${escapeHtml(vendor.contact_info)}</div>` : ''}
+        </div>
+
+        <div class="vendor-payments-section">
+          <div class="vendor-section-header">
+            <span class="vendor-section-title"><i class="fas fa-dollar-sign"></i> Payments</span>
+          </div>
+          ${paymentSummaryHtml}
+          <div class="vendor-payments-scroll">${paymentsHtml}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderVendorFileCard(file) {
+  const ext = file.original_filename?.split('.').pop()?.toLowerCase() || '';
+  const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+  const icon = getFileIcon(file.content_type, file.original_filename);
+  const iconClass = getFileIconClass(file.content_type, file.original_filename);
+  const truncatedName = file.original_filename.length > 18
+    ? file.original_filename.substring(0, 15) + '...'
+    : file.original_filename;
+
+  return `
+    <div class="vendor-file-card">
+      <div class="vendor-file-icon ${iconClass}">
+        <i class="${icon}"></i>
+      </div>
+      <div class="vendor-file-name" title="${escapeHtml(file.original_filename)}">${escapeHtml(truncatedName)}</div>
+      <div class="vendor-file-btns">
+        <button class="btn-icon-sm" onclick="event.stopPropagation(); previewFile('${file.id}', '${ext}', '${escapeHtml(file.original_filename)}')" title="Preview">
+          <i class="fas fa-eye"></i>
+        </button>
+        <button class="btn-icon-sm" onclick="event.stopPropagation(); downloadFile('${file.id}')" title="Download">
+          <i class="fas fa-download"></i>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function renderVendorPaymentRow(payment) {
+  const rawPaid = parseFloat(payment.amount_paid || 0);
+  const rawAmt = parseFloat(payment.amount || 0);
+  const amount = rawPaid > 0 ? rawPaid : rawAmt;
+  const isPaid = !!payment.paid_date;
+  const dateStr = isPaid
+    ? formatShortDate(parseDateLocal(payment.paid_date))
+    : payment.due_date ? `Due ${formatShortDate(parseDateLocal(payment.due_date))}` : '';
+  const statusClass = isPaid ? 'vp-paid' : 'vp-due';
+  const statusLabel = isPaid ? 'Paid' : 'Due';
+
+  return `
+    <div class="vendor-payment-row" id="vp-row-${payment.id}">
+      <div class="vendor-payment-summary" onclick="event.stopPropagation(); togglePaymentDetail('${payment.id}')">
+        <span class="vp-amount">$${formatNumber(amount)}</span>
+        <span class="vp-date">${dateStr}</span>
+        <span class="vp-status ${statusClass}">${statusLabel}</span>
+        <span class="vp-method">${payment.method ? escapeHtml(payment.method) : ''}</span>
+        <i class="fas fa-chevron-down vp-expand-icon" id="vp-icon-${payment.id}"></i>
+      </div>
+      <div class="vendor-payment-detail" id="vp-detail-${payment.id}">
+        ${payment.notes ? `<div class="vp-detail-row"><strong>Notes:</strong> ${escapeHtml(payment.notes)}</div>` : ''}
+        ${payment.due_date ? `<div class="vp-detail-row"><strong>Due Date:</strong> ${formatShortDate(parseDateLocal(payment.due_date))}</div>` : ''}
+        ${payment.method ? `<div class="vp-detail-row"><strong>Method:</strong> ${escapeHtml(payment.method)}</div>` : ''}
+        ${!payment.notes && !payment.due_date && !payment.method ? '<div class="vp-detail-row vp-detail-empty">No additional details</div>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+function toggleVendorCard(vendorId) {
+  const card = document.getElementById(`vendor-card-${vendorId}`);
+  const detail = document.getElementById(`vendor-detail-${vendorId}`);
+  const icon = document.getElementById(`vendor-expand-icon-${vendorId}`);
+  if (!detail) return;
+
+  card.classList.toggle('expanded');
+
+  if (card.classList.contains('expanded')) {
+    detail.style.maxHeight = 'none';
+    detail.style.overflow = 'auto';
+    if (icon) icon.style.transform = 'rotate(180deg)';
+  } else {
+    detail.style.maxHeight = '0';
+    detail.style.overflow = 'hidden';
+    if (icon) icon.style.transform = 'rotate(0)';
+  }
+}
+
+function togglePaymentDetail(paymentId) {
+  const row = document.getElementById(`vp-row-${paymentId}`);
+  const detail = document.getElementById(`vp-detail-${paymentId}`);
+  const icon = document.getElementById(`vp-icon-${paymentId}`);
+  if (!detail) return;
+
+  row.classList.toggle('expanded');
+
+  if (row.classList.contains('expanded')) {
+    detail.style.maxHeight = detail.scrollHeight + 'px';
+    if (icon) icon.style.transform = 'rotate(180deg)';
+  } else {
+    detail.style.maxHeight = '0';
+    if (icon) icon.style.transform = 'rotate(0)';
+  }
+}
+
+async function saveVendorNotes(vendorId) {
+  if (!currentEventId) return;
+  const textarea = document.getElementById(`vendor-notes-${vendorId}`);
+  if (!textarea) return;
+
+  try {
+    await fetch(`${API_BASE}/api/events/${currentEventId}/vendors/${vendorId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes: textarea.value }),
+    });
+  } catch (error) {
+    console.error('Failed to save vendor notes:', error);
+  }
+}
+
+function previewFile(attachmentId, ext, filename) {
+  if (!currentEventId) return;
+  const url = `${API_BASE}/api/events/${currentEventId}/attachments/${attachmentId}/download`;
+  const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+
+  if (isImage) {
+    const lightbox = document.getElementById('imageLightbox');
+    const img = document.getElementById('lightboxImage');
+    img.src = url;
+    lightbox.classList.add('show');
+  } else {
+    const modal = document.getElementById('filePreviewModal');
+    const frame = document.getElementById('filePreviewFrame');
+    const title = document.getElementById('filePreviewTitle');
+    title.textContent = filename || 'Document Preview';
+    frame.src = url;
+    modal.classList.add('show');
+  }
+}
+
+function closeLightbox() {
+  const lightbox = document.getElementById('imageLightbox');
+  lightbox.classList.remove('show');
+  document.getElementById('lightboxImage').src = '';
+}
+
+function closeFilePreview() {
+  const modal = document.getElementById('filePreviewModal');
+  modal.classList.remove('show');
+  document.getElementById('filePreviewFrame').src = '';
+}
+
+async function loadTasksKanban() {
   if (!currentEventId) return;
   
   try {
     const response = await fetch(`${API_BASE}/api/events/${currentEventId}/tasks`);
     const tasks = await response.json();
     
-    const container = document.getElementById('allTasksList');
-    if (!container) return;
+    const columns = {
+      pending: tasks.filter(t => t.status === 'pending'),
+      in_progress: tasks.filter(t => t.status === 'in_progress'),
+      completed: tasks.filter(t => t.status === 'completed'),
+    };
     
-    if (tasks.length === 0) {
-      container.innerHTML = '<div class="empty-state-v2"><p>No tasks yet</p></div>';
-      return;
+    const priorityOrder = { high: 0, medium: 1, low: 2 };
+    for (const col of Object.values(columns)) {
+      col.sort((a, b) => (priorityOrder[a.priority] || 2) - (priorityOrder[b.priority] || 2));
     }
     
-    // Sort: pending first, then by priority
-    const priorityOrder = { high: 0, medium: 1, low: 2 };
-    const sortedTasks = [...tasks].sort((a, b) => {
-      if (a.status === 'completed' && b.status !== 'completed') return 1;
-      if (a.status !== 'completed' && b.status === 'completed') return -1;
-      return (priorityOrder[a.priority] || 2) - (priorityOrder[b.priority] || 2);
-    });
+    for (const [status, list] of Object.entries(columns)) {
+      const container = document.getElementById(`kanban-${status}`);
+      const countEl = document.getElementById(`kanban-count-${status}`);
+      if (countEl) countEl.textContent = list.length;
+      if (!container) continue;
+      
+      if (list.length === 0) {
+        container.innerHTML = '<div class="kanban-empty">No tasks</div>';
+      } else {
+        container.innerHTML = list.map(task => renderKanbanCard(task)).join('');
+      }
+    }
     
-    container.innerHTML = sortedTasks.map(task => `
-      <div class="task-item-full">
-        <span class="task-checkbox ${task.status === 'completed' ? 'completed' : ''}"></span>
-        <div class="task-content">
-          <div class="task-title ${task.status === 'completed' ? 'completed' : ''}">${escapeHtml(task.title)}</div>
-          <div class="task-meta">
-            ${task.priority ? `<span class="task-priority ${task.priority}">${task.priority}</span>` : ''}
-            ${task.due_date ? `<span>Due ${formatShortDate(new Date(task.due_date))}</span>` : ''}
-          </div>
-        </div>
-      </div>
-    `).join('');
+    setupKanbanDragDrop();
     
   } catch (error) {
-    console.error('Failed to load tasks V2:', error);
+    console.error('Failed to load kanban:', error);
+  }
+}
+
+function renderKanbanCard(task) {
+  const categoryLabel = task.vendor_category
+    ? `<span class="task-label task-label-category">${escapeHtml(task.vendor_category)}</span>`
+    : '';
+  const priorityLabel = task.priority
+    ? `<span class="task-label task-label-priority-${task.priority}">${task.priority}</span>`
+    : '';
+  const dueText = task.due_date
+    ? `<div class="kanban-card-due"><i class="fas fa-clock"></i> ${formatShortDate(parseDateLocal(task.due_date))}</div>`
+    : '';
+  const assigneeText = task.assignee
+    ? `<div class="kanban-card-assignee"><i class="fas fa-user"></i> ${escapeHtml(task.assignee)}</div>`
+    : '';
+  
+  const taskJson = escapeHtml(JSON.stringify(task));
+  
+  return `
+    <div class="kanban-card" draggable="true" data-task-id="${task.id}" data-vendor-id="${task.vendor_id || ''}" data-task='${taskJson}'>
+      <div class="kanban-card-title">${escapeHtml(task.title)}</div>
+      <div class="kanban-card-footer">
+        <div class="kanban-card-meta">
+          ${priorityLabel}${categoryLabel}
+        </div>
+        ${dueText}
+      </div>
+      ${assigneeText ? `<div class="kanban-card-bottom">${assigneeText}</div>` : ''}
+    </div>`;
+}
+
+let activeTaskId = null;
+let activeTaskDescOriginal = '';
+let activeTaskOriginalDate = '';
+let activeTaskOriginalTime = '';
+let activeTaskOriginalAllDay = false;
+let activeTaskOriginalPriority = '';
+let activeTaskOriginalLabel = '';
+let activeTaskOriginalAssignee = '';
+
+async function showTaskDetail(cardEl) {
+  if (cardEl.classList.contains('dragging')) return;
+  
+  let task;
+  try {
+    const raw = cardEl.getAttribute('data-task');
+    task = JSON.parse(raw.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'"));
+  } catch (e) {
+    console.error('Failed to parse task data:', e);
+    return;
+  }
+  
+  activeTaskId = task.id;
+  
+  document.getElementById('taskDetailTitle').textContent = task.title || 'Untitled Task';
+  
+  const statusMap = { pending: 'To Do', in_progress: 'In Progress', completed: 'Done' };
+  const statusClassMap = { pending: 'status-todo', in_progress: 'status-in-progress', completed: 'status-done' };
+  document.getElementById('taskDetailStatus').innerHTML =
+    `<span class="task-label ${statusClassMap[task.status] || 'status-todo'}">${statusMap[task.status] || task.status}</span>`;
+  
+  const prioSelect = document.getElementById('taskDetailPriority');
+  prioSelect.innerHTML = ['low','medium','high'].map(p =>
+    `<option value="${p}" ${p === (task.priority || 'medium') ? 'selected' : ''}>${p.charAt(0).toUpperCase() + p.slice(1)}</option>`
+  ).join('');
+  activeTaskOriginalPriority = task.priority || 'medium';
+  
+  const labelSelect = document.getElementById('taskDetailLabelSelect');
+  await populateTaskLabelDropdown(labelSelect, task.vendor_category || '');
+  activeTaskOriginalLabel = task.vendor_category || '';
+  
+  const dateInput = document.getElementById('taskDetailDueDate');
+  const timeInput = document.getElementById('taskDetailDueTime');
+  const allDayCheckbox = document.getElementById('taskDetailAllDay');
+  
+  dateInput.value = task.due_date || '';
+  const hasTime = !!task.due_time;
+  timeInput.value = task.due_time ? task.due_time.substring(0, 5) : '';
+  allDayCheckbox.checked = !hasTime;
+  timeInput.style.display = allDayCheckbox.checked ? 'none' : '';
+  
+  activeTaskOriginalDate = dateInput.value;
+  activeTaskOriginalTime = timeInput.value;
+  activeTaskOriginalAllDay = allDayCheckbox.checked;
+  
+  const vendorSection = document.getElementById('taskDetailVendorSection');
+  if (task.vendor_name) {
+    vendorSection.style.display = '';
+    document.getElementById('taskDetailVendor').textContent = task.vendor_name;
+  } else {
+    vendorSection.style.display = 'none';
+  }
+  
+  renderAssigneePills(task.assignee || '');
+  activeTaskOriginalAssignee = task.assignee || '';
+  
+  const descEl = document.getElementById('taskDetailDescription');
+  const descHtml = task.description || '';
+  descEl.innerHTML = descHtml;
+  activeTaskDescOriginal = descHtml;
+  
+  document.getElementById('taskDetailModal').classList.add('show');
+}
+
+async function populateTaskLabelDropdown(selectEl, currentCategory) {
+  let options = '<option value="">None</option>';
+  try {
+    const resp = await fetch(`${API_BASE}/api/events/${currentEventId}/vendors`);
+    if (resp.ok) {
+      const vendors = await resp.json();
+      const categories = [...new Set(vendors.map(v => v.category).filter(Boolean))];
+      categories.sort();
+      categories.forEach(cat => {
+        const sel = cat === currentCategory ? ' selected' : '';
+        options += `<option value="${escapeHtml(cat)}"${sel}>${escapeHtml(cat)}</option>`;
+      });
+    }
+  } catch (e) {
+    console.error('Failed to load vendor categories:', e);
+  }
+  selectEl.innerHTML = options;
+  if (currentCategory && !selectEl.value) {
+    selectEl.value = currentCategory;
+  }
+}
+
+function renderAssigneePills(assigneeStr) {
+  const pillsContainer = document.getElementById('assigneePills');
+  const textInput = document.getElementById('assigneeTextInput');
+  const names = assigneeStr ? assigneeStr.split(',').map(n => n.trim()).filter(Boolean) : [];
+  pillsContainer.innerHTML = names.map(name =>
+    `<span class="assignee-pill">${escapeHtml(name)}<span class="assignee-pill-remove" onclick="removeAssigneePill(this)">&times;</span></span>`
+  ).join('');
+  textInput.value = '';
+}
+
+function getAssigneeString() {
+  const pills = document.querySelectorAll('#assigneePills .assignee-pill');
+  return Array.from(pills).map(p => {
+    const clone = p.cloneNode(true);
+    const rm = clone.querySelector('.assignee-pill-remove');
+    if (rm) rm.remove();
+    return clone.textContent.trim();
+  }).filter(Boolean).join(', ');
+}
+
+function removeAssigneePill(removeEl) {
+  removeEl.parentElement.remove();
+}
+
+(function() {
+  document.addEventListener('DOMContentLoaded', () => {
+    const cb = document.getElementById('taskDetailAllDay');
+    if (cb) {
+      cb.addEventListener('change', function() {
+        document.getElementById('taskDetailDueTime').style.display = this.checked ? 'none' : '';
+      });
+    }
+    
+    const assigneeInput = document.getElementById('assigneeTextInput');
+    if (assigneeInput) {
+      assigneeInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const name = this.value.trim();
+          if (!name) return;
+          const pillsContainer = document.getElementById('assigneePills');
+          const pill = document.createElement('span');
+          pill.className = 'assignee-pill';
+          pill.innerHTML = `${escapeHtml(name)}<span class="assignee-pill-remove" onclick="removeAssigneePill(this)">&times;</span>`;
+          pillsContainer.appendChild(pill);
+          this.value = '';
+        }
+        if (e.key === 'Backspace' && this.value === '') {
+          const pillsContainer = document.getElementById('assigneePills');
+          const lastPill = pillsContainer.lastElementChild;
+          if (lastPill) lastPill.remove();
+        }
+      });
+    }
+    
+    const pillInput = document.getElementById('assigneePillInput');
+    if (pillInput) {
+      pillInput.addEventListener('click', () => {
+        document.getElementById('assigneeTextInput').focus();
+      });
+    }
+  });
+})();
+
+function execDescCmd(command) {
+  document.execCommand(command, false, null);
+  document.getElementById('taskDetailDescription').focus();
+}
+
+async function closeTaskDetail() {
+  const descEl = document.getElementById('taskDetailDescription');
+  const newDesc = descEl.innerHTML.trim();
+  
+  const dateInput = document.getElementById('taskDetailDueDate');
+  const timeInput = document.getElementById('taskDetailDueTime');
+  const allDayCheckbox = document.getElementById('taskDetailAllDay');
+  
+  const newDate = dateInput.value;
+  const newTime = allDayCheckbox.checked ? '' : timeInput.value;
+  const newPriority = document.getElementById('taskDetailPriority').value;
+  const newLabel = document.getElementById('taskDetailLabelSelect').value;
+  const newAssignee = getAssigneeString();
+  
+  const descChanged = newDesc !== activeTaskDescOriginal;
+  const dateChanged = newDate !== activeTaskOriginalDate;
+  const timeChanged = newTime !== activeTaskOriginalTime;
+  const prioChanged = newPriority !== activeTaskOriginalPriority;
+  const labelChanged = newLabel !== activeTaskOriginalLabel;
+  const assigneeChanged = newAssignee !== activeTaskOriginalAssignee;
+  
+  const anyChange = descChanged || dateChanged || timeChanged || prioChanged || labelChanged || assigneeChanged;
+  
+  if (activeTaskId && anyChange) {
+    try {
+      const payload = {};
+      if (descChanged) payload.description = newDesc;
+      if (dateChanged) payload.due_date = newDate || null;
+      if (timeChanged || dateChanged) payload.due_time = (newTime && newDate) ? newTime + ':00' : null;
+      if (prioChanged) payload.priority = newPriority;
+      if (labelChanged) payload.vendor_category = newLabel || null;
+      if (assigneeChanged) payload.assignee = newAssignee || null;
+      
+      await fetch(`${API_BASE}/api/events/${currentEventId}/tasks/${activeTaskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      loadDashboardV2();
+    } catch (e) {
+      console.error('Failed to save task changes:', e);
+    }
+  }
+  
+  activeTaskId = null;
+  activeTaskDescOriginal = '';
+  activeTaskOriginalDate = '';
+  activeTaskOriginalTime = '';
+  activeTaskOriginalAllDay = false;
+  activeTaskOriginalPriority = '';
+  activeTaskOriginalLabel = '';
+  activeTaskOriginalAssignee = '';
+  document.getElementById('taskDetailModal').classList.remove('show');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeTaskDetail();
+});
+
+document.addEventListener('click', (e) => {
+  const modal = document.getElementById('taskDetailModal');
+  if (e.target === modal) closeTaskDetail();
+});
+
+function setupKanbanDragDrop() {
+  const cards = document.querySelectorAll('.kanban-card');
+  const dropZones = document.querySelectorAll('.kanban-cards');
+  
+  cards.forEach(card => {
+    let didDrag = false;
+    card.addEventListener('mousedown', () => { didDrag = false; });
+    card.addEventListener('dragstart', (e) => {
+      didDrag = true;
+      e.dataTransfer.setData('text/plain', card.dataset.taskId);
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      dropZones.forEach(z => z.classList.remove('kanban-drag-over'));
+    });
+    card.addEventListener('click', () => {
+      if (didDrag) return;
+      showTaskDetail(card);
+    });
+  });
+  
+  dropZones.forEach(zone => {
+    zone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      zone.classList.add('kanban-drag-over');
+    });
+    zone.addEventListener('dragleave', () => {
+      zone.classList.remove('kanban-drag-over');
+    });
+    zone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      zone.classList.remove('kanban-drag-over');
+      const taskId = e.dataTransfer.getData('text/plain');
+      const newStatus = zone.closest('.kanban-column').dataset.status;
+      await updateTaskStatus(taskId, newStatus);
+    });
+  });
+}
+
+async function updateTaskStatus(taskId, newStatus) {
+  if (!currentEventId) return;
+  try {
+    const response = await fetch(`${API_BASE}/api/events/${currentEventId}/tasks/${taskId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus })
+    });
+    if (response.ok) {
+      loadTasksKanban();
+      loadDashboardV2();
+    }
+  } catch (error) {
+    console.error('Failed to update task status:', error);
   }
 }
 
@@ -2241,15 +2772,16 @@ async function loadCalendarV2() {
         calendarContainer.innerHTML = '<div class="empty-state-v2"><p>No calendar events yet</p></div>';
       } else {
         // Sort by date
-        const sortedCalendar = [...calendar].sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
+        const sortedCalendar = [...calendar].sort((a, b) => parseDateLocal(a.event_date) - parseDateLocal(b.event_date));
         
         calendarContainer.innerHTML = sortedCalendar.map(c => {
-          const date = new Date(c.event_date);
-          const day = date.getDate();
-          const month = date.toLocaleDateString('en-US', { month: 'short' });
+          const evDate = parseDateLocal(c.event_date);
+          const day = evDate.getDate();
+          const month = evDate.toLocaleDateString('en-US', { month: 'short' });
+          const calJson = escapeHtml(JSON.stringify(c));
           
           return `
-            <div class="calendar-item-v2">
+            <div class="calendar-item-v2 clickable" onclick="showCalendarEventDetail(this)" data-cal='${calJson}'>
               <div class="calendar-date-badge">
                 <span class="calendar-date-day">${day}</span>
                 <span class="calendar-date-month">${month}</span>
@@ -2267,4 +2799,410 @@ async function loadCalendarV2() {
   } catch (error) {
     console.error('Failed to load calendar V2:', error);
   }
+}
+
+// ============================================
+// CALENDAR EVENT DETAIL POPUP
+// ============================================
+
+let activeCalendarEventId = null;
+let activeCalendarNotesOriginal = '';
+
+function showCalendarEventDetail(el) {
+  const calData = JSON.parse(el.dataset.cal);
+  activeCalendarEventId = calData.id;
+  
+  const modal = document.getElementById('calendarDetailModal');
+  if (!modal) return;
+  
+  document.getElementById('calDetailTitle').textContent = calData.title || 'Event';
+  document.getElementById('calDetailDate').textContent = calData.event_date
+    ? formatShortDate(parseDateLocal(calData.event_date))
+    : '';
+  document.getElementById('calDetailTime').textContent = calData.event_time || 'All day';
+  document.getElementById('calDetailLocation').textContent = calData.location || 'No location';
+  
+  const notesEl = document.getElementById('calDetailNotes');
+  notesEl.innerHTML = calData.notes || '';
+  activeCalendarNotesOriginal = calData.notes || '';
+  
+  modal.classList.add('active');
+}
+
+async function closeCalendarDetail() {
+  const modal = document.getElementById('calendarDetailModal');
+  if (!modal) return;
+  
+  const notesEl = document.getElementById('calDetailNotes');
+  const newNotes = notesEl.innerHTML.trim();
+  
+  if (activeCalendarEventId && newNotes !== activeCalendarNotesOriginal) {
+    try {
+      await fetch(`${API_BASE}/api/events/${currentEventId}/calendar/${activeCalendarEventId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: newNotes })
+      });
+      loadCalendarV2();
+    } catch (err) {
+      console.error('Failed to save calendar notes:', err);
+    }
+  }
+  
+  activeCalendarEventId = null;
+  modal.classList.remove('active');
+}
+
+// ============================================
+// FILES VIEW
+// ============================================
+
+function setupFileDragDrop() {
+  const dropZone = document.getElementById('fileDropZone');
+  const fileInput = document.getElementById('fileInput');
+  if (!dropZone || !fileInput) return;
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drag-over');
+  });
+
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const files = e.dataTransfer.files;
+    if (files.length > 0) handleFileUploads(files);
+  });
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length > 0) {
+      handleFileUploads(fileInput.files);
+      fileInput.value = '';
+    }
+  });
+}
+
+async function handleFileUploads(fileList) {
+  if (!currentEventId) {
+    showToast('Please select an event first', 'error');
+    return;
+  }
+
+  const dropZone = document.getElementById('fileDropZone');
+  const originalHtml = dropZone.innerHTML;
+  dropZone.innerHTML = '<i class="fas fa-spinner fa-spin"></i><p>Uploading...</p>';
+
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (const file of fileList) {
+    try {
+      await uploadSingleFile(file);
+      successCount++;
+    } catch (error) {
+      errorCount++;
+      console.error('Upload failed:', file.name, error);
+    }
+  }
+
+  dropZone.innerHTML = originalHtml;
+  setupFileDragDrop();
+
+  if (successCount > 0) {
+    showToast(`Uploaded ${successCount} file${successCount > 1 ? 's' : ''}`, 'success');
+    loadFilesV2();
+  }
+  if (errorCount > 0) {
+    showToast(`${errorCount} file${errorCount > 1 ? 's' : ''} failed to upload`, 'error');
+  }
+}
+
+async function uploadSingleFile(file, metadata = {}) {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (metadata.description) formData.append('description', metadata.description);
+  if (metadata.category) formData.append('category', metadata.category);
+  if (metadata.vendor_id) formData.append('vendor_id', metadata.vendor_id);
+  if (metadata.payment_id) formData.append('payment_id', metadata.payment_id);
+
+  const response = await fetch(`${API_BASE}/api/events/${currentEventId}/attachments`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || 'Upload failed');
+  }
+
+  return await response.json();
+}
+
+async function loadFilesV2() {
+  if (!currentEventId) return;
+
+  const categoryFilter = document.getElementById('fileCategoryFilter')?.value || '';
+  const vendorFilter = document.getElementById('fileVendorFilter')?.value || '';
+  const sortBy = document.getElementById('fileSortBy')?.value || 'created_at';
+
+  const params = new URLSearchParams();
+  if (categoryFilter) params.set('category', categoryFilter);
+  if (vendorFilter) params.set('vendor_id', vendorFilter);
+  params.set('sort_by', sortBy);
+  params.set('sort_order', fileSortOrder);
+
+  try {
+    const [filesResponse, vendorsResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/events/${currentEventId}/attachments?${params}`),
+      fetch(`${API_BASE}/api/events/${currentEventId}/vendors`),
+    ]);
+
+    const files = await filesResponse.json();
+    const vendors = await vendorsResponse.json();
+
+    populateVendorFilter(vendors);
+    renderFileGrid(files, vendors);
+  } catch (error) {
+    console.error('Failed to load files:', error);
+  }
+}
+
+function populateVendorFilter(vendors) {
+  const select = document.getElementById('fileVendorFilter');
+  if (!select) return;
+
+  const currentValue = select.value;
+  const options = '<option value="">All Vendors</option>' +
+    vendors.map(v => `<option value="${v.id}">${escapeHtml(v.name)}</option>`).join('');
+  select.innerHTML = options;
+  select.value = currentValue;
+}
+
+function renderFileGrid(files, vendors) {
+  const container = document.getElementById('fileGrid');
+  if (!container) return;
+
+  if (files.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state-v2">
+        <div class="empty-state-icon"><i class="fas fa-folder-open"></i></div>
+        <p>No files yet. Upload contracts, receipts, or photos.</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = files.map(file => renderFileCard(file, vendors)).join('');
+}
+
+function renderFileCard(file, vendors) {
+  const icon = getFileIcon(file.content_type, file.original_filename);
+  const iconClass = getFileIconClass(file.content_type, file.original_filename);
+  const size = formatFileSize(file.file_size);
+  const date = formatShortDate(new Date(file.created_at));
+  const category = file.category || 'other';
+  const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1);
+
+  const vendorOptions = vendors.map(v =>
+    `<option value="${v.id}" ${file.vendor_id === v.id ? 'selected' : ''}>${escapeHtml(v.name)}</option>`
+  ).join('');
+
+  return `
+    <div class="file-card" id="file-card-${file.id}">
+      <div class="file-card-icon ${iconClass}">
+        <i class="${icon}"></i>
+      </div>
+      <div class="file-card-body">
+        <div class="file-card-name" title="${escapeHtml(file.original_filename)}">${escapeHtml(file.original_filename)}</div>
+        <div class="file-card-meta">
+          <span>${size}</span>
+          <span>${date}</span>
+        </div>
+        <div class="file-card-tags">
+          <span class="file-category-tag tag-${category}">${categoryLabel}</span>
+          ${file.vendor_name ? `<span class="file-vendor-tag"><i class="fas fa-store"></i> ${escapeHtml(file.vendor_name)}</span>` : ''}
+        </div>
+      </div>
+      <div class="file-card-actions">
+        <button class="btn btn-ghost btn-sm" onclick="downloadFile('${file.id}')" title="Download">
+          <i class="fas fa-download"></i>
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="showEditFileModal('${file.id}')" title="Edit">
+          <i class="fas fa-pen"></i>
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="deleteFile('${file.id}')" title="Delete">
+          <i class="fas fa-trash"></i>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function getFileIcon(contentType, filename) {
+  const ext = filename?.split('.').pop()?.toLowerCase() || '';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return 'fas fa-image';
+  if (ext === 'pdf') return 'fas fa-file-pdf';
+  if (['doc', 'docx'].includes(ext)) return 'fas fa-file-word';
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'fas fa-file-excel';
+  if (ext === 'txt') return 'fas fa-file-alt';
+  return 'fas fa-file';
+}
+
+function getFileIconClass(contentType, filename) {
+  const ext = filename?.split('.').pop()?.toLowerCase() || '';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return 'icon-image';
+  if (ext === 'pdf') return 'icon-pdf';
+  if (['doc', 'docx'].includes(ext)) return 'icon-doc';
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'icon-spreadsheet';
+  return 'icon-other';
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  let size = bytes;
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024;
+    i++;
+  }
+  return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function filterFiles() {
+  loadFilesV2();
+}
+
+function toggleFileSortOrder() {
+  fileSortOrder = fileSortOrder === 'desc' ? 'asc' : 'desc';
+  const icon = document.getElementById('fileSortOrderIcon');
+  if (icon) {
+    icon.className = fileSortOrder === 'desc' ? 'fas fa-sort-amount-down' : 'fas fa-sort-amount-up';
+  }
+  loadFilesV2();
+}
+
+function downloadFile(attachmentId) {
+  if (!currentEventId) return;
+  window.open(`${API_BASE}/api/events/${currentEventId}/attachments/${attachmentId}/download`, '_blank');
+}
+
+async function deleteFile(attachmentId) {
+  if (!currentEventId) return;
+  if (!confirm('Delete this file? This cannot be undone.')) return;
+
+  try {
+    const response = await fetch(`${API_BASE}/api/events/${currentEventId}/attachments/${attachmentId}`, {
+      method: 'DELETE',
+    });
+
+    if (response.ok) {
+      showToast('File deleted', 'success');
+      loadFilesV2();
+      if (currentView === 'payments') loadPaymentsV2();
+    } else {
+      showToast('Failed to delete file', 'error');
+    }
+  } catch (error) {
+    console.error('Delete file error:', error);
+    showToast('Failed to delete file', 'error');
+  }
+}
+
+let editingFileId = null;
+
+async function showEditFileModal(attachmentId) {
+  if (!currentEventId) return;
+
+  try {
+    const [fileResponse, vendorsResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/events/${currentEventId}/attachments/${attachmentId}`),
+      fetch(`${API_BASE}/api/events/${currentEventId}/vendors`),
+    ]);
+
+    const file = await fileResponse.json();
+    const vendors = await vendorsResponse.json();
+
+    editingFileId = attachmentId;
+
+    const modal = document.getElementById('editFileModal');
+    document.getElementById('editFileDescription').value = file.description || '';
+    document.getElementById('editFileCategory').value = file.category || '';
+
+    const vendorSelect = document.getElementById('editFileVendor');
+    vendorSelect.innerHTML = '<option value="">None</option>' +
+      vendors.map(v => `<option value="${v.id}" ${file.vendor_id === v.id ? 'selected' : ''}>${escapeHtml(v.name)}</option>`).join('');
+
+    modal.classList.add('show');
+  } catch (error) {
+    console.error('Failed to load file details:', error);
+    showToast('Failed to load file details', 'error');
+  }
+}
+
+function hideEditFileModal() {
+  document.getElementById('editFileModal').classList.remove('show');
+  editingFileId = null;
+}
+
+async function saveFileChanges(e) {
+  e.preventDefault();
+  if (!editingFileId || !currentEventId) return;
+
+  const data = {
+    description: document.getElementById('editFileDescription').value.trim() || null,
+    category: document.getElementById('editFileCategory').value || null,
+    vendor_id: document.getElementById('editFileVendor').value || null,
+  };
+
+  try {
+    const response = await fetch(`${API_BASE}/api/events/${currentEventId}/attachments/${editingFileId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+
+    if (response.ok) {
+      showToast('File updated', 'success');
+      hideEditFileModal();
+      loadFilesV2();
+    } else {
+      showToast('Failed to update file', 'error');
+    }
+  } catch (error) {
+    console.error('Update file error:', error);
+    showToast('Failed to update file', 'error');
+  }
+}
+
+async function uploadFileForVendor(vendorId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.accept = '.pdf,.jpg,.jpeg,.png,.gif,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt';
+
+  input.addEventListener('change', async () => {
+    if (input.files.length === 0) return;
+
+    let successCount = 0;
+    for (const file of input.files) {
+      try {
+        await uploadSingleFile(file, { vendor_id: vendorId });
+        successCount++;
+      } catch (error) {
+        console.error('Vendor upload failed:', error);
+      }
+    }
+
+    if (successCount > 0) {
+      showToast(`Uploaded ${successCount} file${successCount > 1 ? 's' : ''} for vendor`, 'success');
+      loadPaymentsV2();
+    }
+  });
+
+  input.click();
 }

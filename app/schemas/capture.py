@@ -36,15 +36,23 @@ class ResponseMode(str, Enum):
 
 
 class PaymentData(BaseModel):
-    """Extracted payment data."""
-    
+    """Extracted payment data -- supports single or bulk payments."""
+
+    model_config = {"extra": "allow"}
+
     vendor_name: Optional[str] = None
+    vendor_category: Optional[str] = None
     amount_paid: Optional[Decimal] = None
+    amount: Optional[Decimal] = None
     remaining_balance: Optional[Decimal] = None
     payment_date: Optional[date] = None
     due_date: Optional[date] = None
     method: Optional[str] = None
+    description: Optional[str] = None
     notes: Optional[str] = None
+    vendor_notes: Optional[str] = None
+    replace_pending_vendor: Optional[str] = None
+    items: Optional[list[dict]] = None
 
 
 class TaskItem(BaseModel):
@@ -103,6 +111,7 @@ class EventUpdateData(BaseModel):
     """Extracted event update data."""
     
     name: Optional[str] = None
+    event_date: Optional[date] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     location: Optional[str] = None
@@ -158,6 +167,14 @@ class CaptureRequest(BaseModel):
     conversation_history: Optional[list[ConversationMessage]] = None
 
 
+class SecondaryActionData(BaseModel):
+    """A secondary action to process alongside the primary intent."""
+    intent: str
+    action: str = "create"
+    data: dict = Field(default_factory=dict)
+    reference_id: Optional[str] = None
+
+
 class CaptureResponse(BaseModel):
     """Response schema for NL capture extraction."""
     
@@ -171,8 +188,9 @@ class CaptureResponse(BaseModel):
     follow_up_question: Optional[str] = None
     assistant_message: Optional[str] = None
     response_mode: ResponseMode = ResponseMode.CONFIRM
-    referenced_records: Optional[list[str]] = None  # IDs of records used in the response
+    referenced_records: Optional[list[str]] = None
     query_results: Optional[QueryResults] = None
+    secondary_actions: Optional[list[SecondaryActionData]] = None
     log_id: str
 
 
@@ -184,6 +202,7 @@ class ConfirmRequest(BaseModel):
     action: ActionType = ActionType.CREATE
     reference_id: Optional[str] = None
     data: Union[PaymentData, TaskData, CalendarEventData, VendorData, SubEventUpdateData, EventUpdateData]
+    secondary_actions: Optional[list[SecondaryActionData]] = None
 
 
 class ConfirmResponse(BaseModel):

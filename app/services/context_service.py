@@ -9,6 +9,7 @@ from typing import Optional
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.event import Event
 from app.models.vendor import Vendor
 from app.models.payment import Payment
 from app.models.task import Task
@@ -121,7 +122,7 @@ class ContextService:
                 )
             )
         )
-        vendor = vendor_result.scalar_one_or_none()
+        vendor = vendor_result.scalars().first()
         
         if vendor:
             payment_result = await db.execute(
@@ -179,11 +180,27 @@ class ContextService:
     ) -> dict:
         """Get full context including all data types for the event."""
         context = {
+            "event": {},
             "vendors": [],
             "payments": [],
             "tasks": [],
             "sub_events": [],
         }
+        
+        # Get event metadata
+        event_result = await db.execute(
+            select(Event).where(Event.id == event_id)
+        )
+        event = event_result.scalar_one_or_none()
+        if event:
+            context["event"] = {
+                "name": event.name,
+                "event_date": event.event_date.isoformat() if event.event_date else None,
+                "start_date": event.start_date.isoformat() if event.start_date else None,
+                "end_date": event.end_date.isoformat() if event.end_date else None,
+                "location": event.location,
+                "event_type": event.event_type,
+            }
         
         # Get vendors
         vendors_result = await db.execute(
@@ -197,6 +214,8 @@ class ContextService:
                 "id": v.id,
                 "name": v.name,
                 "category": v.category,
+                "notes": v.notes,
+                "contact_info": v.contact_info,
             })
         
         # Get payments
@@ -215,6 +234,7 @@ class ContextService:
                 "paid_date": p.paid_date.isoformat() if p.paid_date else None,
                 "due_date": p.due_date.isoformat() if p.due_date else None,
                 "is_paid": p.paid_date is not None,
+                "method": p.method,
             })
         
         # Get tasks
@@ -231,6 +251,8 @@ class ContextService:
                 "status": t.status.value if hasattr(t.status, 'value') else str(t.status),
                 "due_date": t.due_date.isoformat() if t.due_date else None,
                 "priority": t.priority.value if hasattr(t.priority, 'value') else str(t.priority),
+                "vendor_category": t.vendor_category,
+                "description": t.description,
             })
         
         # Get sub-events
@@ -256,44 +278,72 @@ class ContextService:
         """Format full context as a string for LLM prompt injection."""
         lines = ["=== CURRENT EVENT DATA ===\n"]
         
+        # Event metadata
+        event_info = context.get("event", {})
+        if event_info:
+            lines.append("EVENT DETAILS:")
+            if event_info.get("name"):
+                lines.append(f"  Name: {event_info['name']}")
+            if event_info.get("event_date"):
+                lines.append(f"  Event Date: {event_info['event_date']}")
+            if event_info.get("start_date"):
+                lines.append(f"  Start Date: {event_info['start_date']}")
+            if event_info.get("end_date"):
+                lines.append(f"  End Date: {event_info['end_date']}")
+            if event_info.get("location"):
+                lines.append(f"  Location: {event_info['location']}")
+            if event_info.get("event_type"):
+                lines.append(f"  Type: {event_info['event_type']}")
+            lines.append("")
+        
+        # Vendors section — listed BEFORE payments so LLM sees them first
+        vendors = context.get("vendors", [])
+        if vendors:
+            lines.append(f"BOOKED VENDORS ({len(vendors)} total):")
+            for v in vendors[:10]:
+                notes_str = f" | notes: {v['notes']}" if v.get("notes") else ""
+                contact_str = f" | contact: {v['contact_info']}" if v.get("contact_info") else ""
+                lines.append(f"  - VENDOR_ID={v['id']} | {v['name']} ({v.get('category', 'General')}){notes_str}{contact_str}")
+        else:
+            lines.append("BOOKED VENDORS: None added yet")
+
         # Payments section
         payments = context.get("payments", [])
         paid_payments = [p for p in payments if p.get("is_paid")]
         unpaid_payments = [p for p in payments if not p.get("is_paid")]
-        
+
         if paid_payments:
-            lines.append("COMPLETED PAYMENTS:")
+            lines.append(f"\nCOMPLETED PAYMENTS ({len(paid_payments)}):")
             for p in paid_payments[:10]:
-                lines.append(f"  - ${p['amount']:.2f} to {p['vendor_name']} (paid {p['paid_date']})")
+                method_str = f" via {p['method']}" if p.get("method") else ""
+                lines.append(f"  - PAYMENT_ID={p['id']} | ${p['amount']:.2f} to {p['vendor_name']} (paid {p['paid_date']}){method_str}")
         else:
-            lines.append("COMPLETED PAYMENTS: None recorded yet")
-        
+            lines.append("\nCOMPLETED PAYMENTS: None recorded yet")
+
         if unpaid_payments:
-            lines.append("\nPENDING PAYMENTS (scheduled but not yet paid):")
+            lines.append(f"\nPENDING PAYMENTS ({len(unpaid_payments)}):")
             for p in unpaid_payments[:10]:
-                lines.append(f"  - ${p['amount']:.2f} to {p['vendor_name']} (due {p.get('due_date', 'TBD')})")
+                lines.append(f"  - PAYMENT_ID={p['id']} | ${p['amount']:.2f} to {p['vendor_name']} (due {p.get('due_date', 'TBD')})")
         else:
             lines.append("\nPENDING PAYMENTS: None scheduled")
         
-        # Vendors section
-        vendors = context.get("vendors", [])
-        if vendors:
-            lines.append(f"\nVENDORS ({len(vendors)} total):")
-            for v in vendors[:10]:
-                lines.append(f"  - {v['name']} ({v.get('category', 'General')})")
-        else:
-            lines.append("\nVENDORS: None added yet")
-        
         # Tasks section
         tasks = context.get("tasks", [])
-        pending_tasks = [t for t in tasks if t.get("status") in ("PENDING", "IN_PROGRESS")]
+        pending_tasks = [t for t in tasks if t.get("status", "").lower() in ("pending", "in_progress")]
         if pending_tasks:
             lines.append(f"\nOPEN TASKS ({len(pending_tasks)} pending):")
             for t in pending_tasks[:10]:
                 due = f" (due {t['due_date']})" if t.get('due_date') else ""
-                lines.append(f"  - {t['title']}{due}")
+                cat = f" [label: {t['vendor_category']}]" if t.get('vendor_category') else ""
+                lines.append(f"  - TASK_ID={t['id']} | {t['title']}{due}{cat}")
         else:
             lines.append("\nOPEN TASKS: None")
+        completed_tasks = [t for t in tasks if t.get("status", "").lower() == "completed"]
+        if completed_tasks:
+            lines.append(f"\nCOMPLETED TASKS ({len(completed_tasks)}):")
+            for t in completed_tasks[:5]:
+                cat = f" [label: {t['vendor_category']}]" if t.get('vendor_category') else ""
+                lines.append(f"  - TASK_ID={t['id']} | {t['title']}{cat}")
         
         # Sub-events section
         sub_events = context.get("sub_events", [])

@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Optional
 from enum import Enum
 
@@ -24,7 +24,9 @@ class TaskBase(BaseModel):
     
     title: str
     description: Optional[str] = None
+    assignee: Optional[str] = None
     due_date: Optional[date] = None
+    due_time: Optional[time] = None
     status: TaskStatus = TaskStatus.PENDING
     priority: TaskPriority = TaskPriority.MEDIUM
 
@@ -39,9 +41,12 @@ class TaskUpdate(BaseModel):
     
     title: Optional[str] = None
     description: Optional[str] = None
+    assignee: Optional[str] = None
     due_date: Optional[date] = None
+    due_time: Optional[time] = None
     status: Optional[TaskStatus] = None
     priority: Optional[TaskPriority] = None
+    vendor_category: Optional[str] = None
 
 
 class TaskResponse(TaskBase):
@@ -51,5 +56,8 @@ class TaskResponse(TaskBase):
     
     id: str
     event_id: str
+    vendor_id: Optional[str] = None
+    vendor_category: Optional[str] = None
+    vendor_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime

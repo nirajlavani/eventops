@@ -1,0 +1,251 @@
+{
+  "scenario_name": "Deep Prompting Test Suite",
+  "description": "30 advanced test prompts for a pre-populated wedding event",
+  "test_date": "2026-03-09",
+  "baseline_state": {
+    "event": "Priya & Rahul's Wedding - August 15, 2026",
+    "sub_events": ["Mehndi", "Sangeet", "Haldi", "Wedding Ceremony", "Reception"],
+    "vendors": 15,
+    "total_budget": "$160,800",
+    "paid": "$77,300",
+    "pending": "$83,500",
+    "pending_payments": 12,
+    "tasks_pending": 6,
+    "tasks_completed": 4
+  },
+  "prompts": [
+    {
+      "id": "DP-001",
+      "category": "QUERY - Budget Overview",
+      "prompt": "How much have I spent so far on the wedding?",
+      "expected_behavior": "Returns total paid amount (~$77,300)",
+      "validates": ["Aggregate payment calculation", "Budget query handling"]
+    },
+    {
+      "id": "DP-002",
+      "category": "QUERY - Pending Analysis",
+      "prompt": "What payments are due in the next 3 months?",
+      "expected_behavior": "Filters pending payments by date range",
+      "validates": ["Date range filtering", "Pending payment identification"]
+    },
+    {
+      "id": "DP-003",
+      "category": "QUERY - Vendor Specific",
+      "prompt": "How much have I paid The Grand Pavilion so far?",
+      "expected_behavior": "Returns $15,000 (1 of 3 installments)",
+      "validates": ["Vendor-specific query", "Partial payment tracking"]
+    },
+    {
+      "id": "DP-004",
+      "category": "QUERY - Category Analysis",
+      "prompt": "Show me all payments to my decorator",
+      "expected_behavior": "Shows Celebrations Decor payments ($6,000 paid, $12,000 pending)",
+      "validates": ["Category-based lookup", "Payment history"]
+    },
+    {
+      "id": "DP-005",
+      "category": "QUERY - Largest Expense",
+      "prompt": "What's my biggest expense so far?",
+      "expected_behavior": "Returns venue ($15,000) or photography ($12,000)",
+      "validates": ["Sorting by amount", "Aggregate queries"]
+    },
+    {
+      "id": "DP-006",
+      "category": "UPDATE - Additional Payment",
+      "prompt": "Just paid another $5,000 to The Grand Pavilion today",
+      "expected_behavior": "Creates new payment record for existing vendor",
+      "validates": ["Additional payment to existing vendor", "No duplicate vendor creation"]
+    },
+    {
+      "id": "DP-007",
+      "category": "UPDATE - Payment Method",
+      "prompt": "The DJ Krish payment was actually via Zelle, not Venmo",
+      "expected_behavior": "Should acknowledge the correction",
+      "validates": ["Update existing record", "Payment method change"]
+    },
+    {
+      "id": "DP-008",
+      "category": "NEW - New Vendor",
+      "prompt": "Just booked a dhol group called Punjab Beats for the baraat, $800 paid today",
+      "expected_behavior": "Creates new vendor (music_dj) and payment",
+      "validates": ["New vendor creation", "Category inference (dhol -> music_dj)"]
+    },
+    {
+      "id": "DP-009",
+      "category": "NEW - Partial Payment New Vendor",
+      "prompt": "Hired a wedding planner - Dream Day Events. Total fee $10,000, paid $3,000 retainer",
+      "expected_behavior": "Creates vendor, paid payment, and pending payment",
+      "validates": ["New vendor with partial payment", "Pending payment creation"]
+    },
+    {
+      "id": "DP-010",
+      "category": "QUERY - Task Status",
+      "prompt": "What tasks do I still need to complete?",
+      "expected_behavior": "Lists 6 pending tasks",
+      "validates": ["Task status filtering", "Pending task identification"]
+    },
+    {
+      "id": "DP-011",
+      "category": "UPDATE - Complete Task",
+      "prompt": "Mark the menu tasting task as complete",
+      "expected_behavior": "Updates task status to completed",
+      "validates": ["Task status update", "Task identification by description"]
+    },
+    {
+      "id": "DP-012",
+      "category": "NEW - Add Task",
+      "prompt": "Add task: Buy wedding favors by July 1st",
+      "expected_behavior": "Creates new task with due date",
+      "validates": ["Task creation", "Date parsing"]
+    },
+    {
+      "id": "DP-013",
+      "category": "DELETE - Remove Task",
+      "prompt": "Remove the airport pickups task, we hired a coordinator for that",
+      "expected_behavior": "Asks for confirmation before deleting",
+      "validates": ["Delete confirmation", "Task identification"]
+    },
+    {
+      "id": "DP-014",
+      "category": "QUERY - Sub-event Details",
+      "prompt": "What time does the sangeet start?",
+      "expected_behavior": "Returns 6pm / 18:00",
+      "validates": ["Sub-event query", "Time retrieval"]
+    },
+    {
+      "id": "DP-015",
+      "category": "UPDATE - Reschedule Sub-event",
+      "prompt": "Change the mehndi start time to 3pm instead of 4pm",
+      "expected_behavior": "Updates sub-event time",
+      "validates": ["Sub-event update", "Time modification"]
+    },
+    {
+      "id": "DP-016",
+      "category": "QUERY - Vendor List",
+      "prompt": "List all my booked vendors",
+      "expected_behavior": "Lists all 15 vendors with categories",
+      "validates": ["Vendor enumeration", "Category display"]
+    },
+    {
+      "id": "DP-017",
+      "category": "QUERY - Specific Vendor Status",
+      "prompt": "How much do I still owe the caterer?",
+      "expected_behavior": "Returns $25,000 pending for Royal Feast",
+      "validates": ["Vendor balance query", "Pending amount calculation"]
+    },
+    {
+      "id": "DP-018",
+      "category": "DUPLICATE - Detection",
+      "prompt": "Paid Enmuse Photography $12,000 today",
+      "expected_behavior": "Flags potential duplicate (already paid $12,000)",
+      "validates": ["Duplicate detection", "Existing payment awareness"]
+    },
+    {
+      "id": "DP-019",
+      "category": "CONTEXT - Follow-up",
+      "prompt": "And what about the videographer?",
+      "expected_behavior": "Uses context to understand query about Video Vihaar",
+      "validates": ["Conversation context", "Follow-up handling"]
+    },
+    {
+      "id": "DP-020",
+      "category": "QUERY - Payment Method Analysis",
+      "prompt": "How much have I paid via credit card?",
+      "expected_behavior": "Filters and sums payments by method",
+      "validates": ["Payment method filtering", "Method-based aggregation"]
+    },
+    {
+      "id": "DP-021",
+      "category": "NEW - Bulk Tasks",
+      "prompt": "Add these tasks: 1) Order wedding cake by May 15th 2) Book honeymoon flights by June 1st 3) Get marriage license by August 1st",
+      "expected_behavior": "Creates 3 tasks with respective due dates",
+      "validates": ["Bulk task creation", "Multiple date parsing"]
+    },
+    {
+      "id": "DP-022",
+      "category": "QUERY - Date Range Payments",
+      "prompt": "What payments are due in August?",
+      "expected_behavior": "Lists multiple payments due in August 2026",
+      "validates": ["Month-based filtering", "Date range queries"]
+    },
+    {
+      "id": "DP-023",
+      "category": "QUERY - Completed Payments",
+      "prompt": "Which vendors have I fully paid?",
+      "expected_behavior": "Lists vendors with no pending balance (Photography, Florist, Pandit, etc.)",
+      "validates": ["Fully paid vendor identification", "Payment completion status"]
+    },
+    {
+      "id": "DP-024",
+      "category": "UPDATE - Sub-event Location",
+      "prompt": "The reception will actually be in the Rooftop Terrace, not the Grand Ballroom",
+      "expected_behavior": "Updates reception location",
+      "validates": ["Sub-event location update", "Venue detail modification"]
+    },
+    {
+      "id": "DP-025",
+      "category": "NEW - Calendar Event",
+      "prompt": "Schedule a final venue walkthrough on August 10th at 2pm",
+      "expected_behavior": "Creates calendar event",
+      "validates": ["Calendar event creation", "Pre-wedding event scheduling"]
+    },
+    {
+      "id": "DP-026",
+      "category": "QUERY - Budget Summary",
+      "prompt": "Give me a complete budget breakdown by category",
+      "expected_behavior": "Summarizes spending by vendor category",
+      "validates": ["Category-wise aggregation", "Comprehensive budget view"]
+    },
+    {
+      "id": "DP-027",
+      "category": "QUERY - Next Payment Due",
+      "prompt": "What's my next payment that's coming up?",
+      "expected_behavior": "Returns nearest pending payment by date",
+      "validates": ["Date sorting", "Upcoming payment identification"]
+    },
+    {
+      "id": "DP-028",
+      "category": "UPDATE - Cancel Pending Payment",
+      "prompt": "Cancel the second decorator payment, we renegotiated the contract",
+      "expected_behavior": "Should confirm before removing pending payment",
+      "validates": ["Payment cancellation", "Confirmation for destructive action"]
+    },
+    {
+      "id": "DP-029",
+      "category": "QUERY - Task Priority",
+      "prompt": "What are my high priority tasks?",
+      "expected_behavior": "Filters tasks by priority",
+      "validates": ["Priority-based filtering", "Task prioritization"]
+    },
+    {
+      "id": "DP-030",
+      "category": "COMPLEX - Multi-part Query",
+      "prompt": "How much have I paid the venue, and how much do I still owe them?",
+      "expected_behavior": "Returns both paid ($15,000) and pending ($30,000)",
+      "validates": ["Multi-part query handling", "Paid vs pending breakdown"]
+    }
+  ],
+  "test_categories": {
+    "QUERY": "Read operations - retrieving existing data",
+    "UPDATE": "Modify existing records",
+    "NEW": "Create new records",
+    "DELETE": "Remove records (requires confirmation)",
+    "DUPLICATE": "Detect potential duplicate entries",
+    "CONTEXT": "Use conversation history for context",
+    "COMPLEX": "Multi-part or sophisticated queries"
+  },
+  "expected_capabilities_tested": [
+    "Budget queries (total, by vendor, by category)",
+    "Date range filtering",
+    "Vendor-specific lookups",
+    "Payment status tracking (paid vs pending)",
+    "Task management (create, update, delete)",
+    "Sub-event modifications",
+    "Duplicate detection",
+    "Conversation context preservation",
+    "Bulk operations",
+    "Calendar event creation",
+    "Payment method filtering",
+    "Category-wise analysis"
+  ]
+}

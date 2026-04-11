@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +27,7 @@ from app.schemas.capture import (
     ConversationData,
     UnknownData,
     ResponseMode,
+    SecondaryActionData,
 )
 
 router = APIRouter()
@@ -111,6 +113,14 @@ async def extract_from_text(
     referenced_records = result.get("referenced_records")
     query_results = None
     
+    raw_secondary = result.get("secondary_actions")
+    secondary_actions = None
+    if raw_secondary and isinstance(raw_secondary, list):
+        secondary_actions = [
+            SecondaryActionData(**sa) for sa in raw_secondary
+            if isinstance(sa, dict) and sa.get("intent")
+        ]
+    
     # Map response_mode from result
     response_mode_str = result.get("response_mode", "confirm")
     try:
@@ -118,31 +128,40 @@ async def extract_from_text(
     except ValueError:
         response_mode = ResponseMode.CONFIRM
     
-    if intent == IntentType.PAYMENT:
-        parsed_data = PaymentData(**data)
-    elif intent == IntentType.TASK:
-        parsed_data = TaskData(**data)
-    elif intent == IntentType.CALENDAR_EVENT:
-        parsed_data = CalendarEventData(**data)
-    elif intent == IntentType.VENDOR:
-        parsed_data = VendorData(**data)
-    elif intent == IntentType.QUERY:
-        parsed_data = QueryData(**data)
-        query_response = await extraction_service.handle_query(
-            event_id=event_id,
-            data=data,
-            db=db,
-        )
-        query_results = QueryResults(**query_response)
-        needs_confirmation = False
-    elif intent == IntentType.CONVERSATION:
-        parsed_data = ConversationData(**data) if data else ConversationData()
-        needs_confirmation = False
-    elif intent == IntentType.UNKNOWN:
-        parsed_data = UnknownData()
-    else:
-        parsed_data = UnknownData()
-        intent = IntentType.UNKNOWN
+    try:
+        if intent == IntentType.PAYMENT:
+            parsed_data = PaymentData(**data)
+        elif intent == IntentType.TASK:
+            parsed_data = TaskData(**data)
+        elif intent == IntentType.CALENDAR_EVENT:
+            parsed_data = CalendarEventData(**data)
+        elif intent == IntentType.VENDOR:
+            parsed_data = VendorData(**data)
+        elif intent == IntentType.QUERY:
+            parsed_data = QueryData(**data)
+            query_response = await extraction_service.handle_query(
+                event_id=event_id,
+                data=data,
+                db=db,
+            )
+            query_results = QueryResults(**query_response)
+            needs_confirmation = False
+        elif intent == IntentType.CONVERSATION:
+            parsed_data = ConversationData(**data) if data else ConversationData()
+            needs_confirmation = False
+        elif intent == IntentType.UNKNOWN:
+            parsed_data = UnknownData()
+        else:
+            parsed_data = UnknownData()
+            intent = IntentType.UNKNOWN
+    except (ValueError, ValidationError) as e:
+        logger.warning(f"Schema mismatch for intent={intent}: {e}. Falling back to payment parse.")
+        try:
+            parsed_data = PaymentData(**data)
+            intent = IntentType.PAYMENT
+        except Exception:
+            parsed_data = UnknownData()
+            intent = IntentType.UNKNOWN
     
     return CaptureResponse(
         intent=intent,
@@ -157,6 +176,7 @@ async def extract_from_text(
         response_mode=response_mode,
         referenced_records=referenced_records,
         query_results=query_results,
+        secondary_actions=secondary_actions,
         log_id=log_id,
     )
 
@@ -197,6 +217,16 @@ async def confirm_extraction(
         data=data_dict,
         db=db,
     )
+    
+    if success and request.secondary_actions:
+        sa_dicts = [sa.model_dump() for sa in request.secondary_actions]
+        sa_messages = await extraction_service.process_secondary_actions(
+            event_id=event_id,
+            secondary_actions=sa_dicts,
+            db=db,
+        )
+        if sa_messages:
+            message = f"{message}. {'; '.join(sa_messages)}"
     
     return ConfirmResponse(
         success=success,
