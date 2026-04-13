@@ -1,11 +1,12 @@
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 from app.retrieval.vector_store import VectorStore, SearchResult
 from app.retrieval.embeddings import EmbeddingService
 from app.retrieval.chunking import extract_text_from_pdf, chunk_by_sections, Chunk
-from app.services.llm_service import LLMService
+from app.services.llm_service import LLMService, ModelTier
 
 logger = logging.getLogger(__name__)
 
@@ -15,12 +16,16 @@ The user is asking about their uploaded documents (contracts, quotes, invoices).
 Answer based ONLY on the excerpts below. If the excerpts don't contain enough info, say so.
 
 RULES:
+- Start with a brief conversational sentence that names the document. Examples:
+  "According to the Lauren Vaughan Photography contract, ..."
+  "Looking at the Awaaz Entertainment agreement, ..."
+  "From the Blackberry Ridge venue contract, ..."
+- Then provide the specific answer, quoting relevant contract language using > blockquotes.
 - Write in plain, conversational English. Be concise and direct.
 - CITE using [1], [2], etc. matching the excerpt number where each fact appears.
   Use different numbers for facts from different excerpts. Never default to one number.
-- When referencing specific terms, clauses, or language from the document, quote them
-  using > at the start of the line. ALWAYS prefer blockquotes over bullet points for
-  contract language. Bullet points should only be used for your own summary lists.
+- ALWAYS prefer blockquotes (>) over bullet points for contract language.
+  Bullet points should only be used for your own summary lists.
 - Do NOT include any "Sources" section — citations are handled separately.
 
 {excerpts}
@@ -42,6 +47,11 @@ class RAGResponse:
     answer: str
     citations: list[Citation] = field(default_factory=list)
     has_results: bool = True
+    latency_ms: int = 0
+    chunks_searched: int = 0
+    chunks_returned: int = 0
+    top_score: float = 0.0
+    llm_usage: dict = field(default_factory=dict)
 
 
 class RAGService:
@@ -117,6 +127,7 @@ class RAGService:
         top_k: int = 5,
     ) -> RAGResponse:
         """Answer a question using RAG: search documents, then generate an answer with citations."""
+        t0 = time.perf_counter()
         logger.info(
             "RAG query: event=%s question=%r vendor_filter=%s",
             event_id, question[:100], vendor_name,
@@ -135,11 +146,13 @@ class RAGService:
                        "Make sure you've uploaded the contract or document you're asking about.",
                 citations=[],
                 has_results=False,
+                latency_ms=int((time.perf_counter() - t0) * 1000),
             )
 
+        top_score = search_results[0].score if search_results else 0
         logger.info(
             "RAG found %d results, top score=%.3f, generating answer…",
-            len(search_results), search_results[0].score if search_results else 0,
+            len(search_results), top_score,
         )
         excerpts = self._format_excerpts(search_results)
         system_prompt = RAG_SYSTEM_PROMPT.format(excerpts=excerpts)
@@ -149,7 +162,9 @@ class RAGService:
             {"role": "user", "content": question},
         ]
 
-        answer = await self.llm_service._call_api(messages, max_tokens=1024)
+        answer, llm_usage = await self.llm_service._call_api(
+            messages, max_tokens=1024, tier=ModelTier.STRONG,
+        )
 
         citations = [
             Citation(
@@ -161,24 +176,30 @@ class RAGService:
                 score=r.score,
             )
             for r in search_results
-            if r.score > 0.3
+            if r.score > 0.15
         ]
 
+        total_latency = int((time.perf_counter() - t0) * 1000)
         logger.info(
-            "RAG response: %d citations (filtered from %d), answer_len=%d",
-            len(citations), len(search_results), len(answer),
+            "RAG response: %d citations (filtered from %d), answer_len=%d, latency=%dms",
+            len(citations), len(search_results), len(answer), total_latency,
         )
         return RAGResponse(
             answer=answer,
             citations=citations,
             has_results=True,
+            latency_ms=total_latency,
+            chunks_searched=len(search_results),
+            chunks_returned=len(citations),
+            top_score=top_score,
+            llm_usage=llm_usage,
         )
 
     def _format_excerpts(self, results: list[SearchResult]) -> str:
         parts: list[str] = []
         for i, r in enumerate(results, 1):
             parts.append(
-                f"[{i}] Section: {r.section_title} | Page {r.page_number}\n"
+                f"[{i}] Document: {r.document_name} | Section: {r.section_title} | Page {r.page_number}\n"
                 f"{r.text}\n"
             )
         return "\n".join(parts)

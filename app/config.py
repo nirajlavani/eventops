@@ -7,7 +7,9 @@ class Settings(BaseSettings):
     
     openrouter_api_key: str = ""
     openai_api_key: str = ""
-    llm_model: str = "minimax/minimax-m2.5"
+    llm_model: str = "google/gemini-2.0-flash-001"
+    llm_model_fast: str = ""
+    llm_model_strong: str = ""
     database_url: str = "sqlite+aiosqlite:///./eventops.db"
     environment: str = "development"
     debug: bool = True

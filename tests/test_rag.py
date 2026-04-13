@@ -351,7 +351,7 @@ class TestRAGService:
         mock_vs.search = AsyncMock(return_value=mock_results)
 
         mock_llm = AsyncMock()
-        mock_llm._call_api = AsyncMock(return_value="The cancellation policy requires 180 days notice for a full refund.")
+        mock_llm._call_api = AsyncMock(return_value=("The cancellation policy requires 180 days notice for a full refund.", {}))
 
         rag = RAGService(vector_store=mock_vs, llm_service=mock_llm)
         response = await rag.query("event_1", "What is the cancellation policy?")
@@ -413,7 +413,7 @@ class TestRAGService:
         mock_vs.search = AsyncMock(return_value=mock_results)
 
         mock_llm = AsyncMock()
-        mock_llm._call_api = AsyncMock(return_value="Answer based on section A.")
+        mock_llm._call_api = AsyncMock(return_value=("Answer based on section A.", {}))
 
         rag = RAGService(vector_store=mock_vs, llm_service=mock_llm)
         response = await rag.query("event_1", "some question")

@@ -293,103 +293,105 @@ class ContextService:
 
         return context
     
-    def format_full_context_for_prompt(self, context: dict) -> str:
-        """Format full context as a string for LLM prompt injection."""
-        lines = ["=== CURRENT EVENT DATA ===\n"]
-        
-        # Event metadata
+    def format_full_context_for_prompt(self, context: dict, compact: bool = False) -> str:
+        """Format context as a string for LLM prompt injection.
+
+        When *compact=True* the output is significantly shorter: vendor
+        notes/contact, completed tasks, sub-event times and document
+        metadata are omitted, keeping only IDs and essential fields the
+        LLM needs for create-vs-update decisions.
+        """
+        lines = ["=== EVENT DATA ==="]
+
         event_info = context.get("event", {})
         if event_info:
-            lines.append("EVENT DETAILS:")
-            if event_info.get("name"):
-                lines.append(f"  Name: {event_info['name']}")
-            if event_info.get("event_date"):
-                lines.append(f"  Event Date: {event_info['event_date']}")
-            if event_info.get("start_date"):
-                lines.append(f"  Start Date: {event_info['start_date']}")
-            if event_info.get("end_date"):
-                lines.append(f"  End Date: {event_info['end_date']}")
-            if event_info.get("location"):
-                lines.append(f"  Location: {event_info['location']}")
-            if event_info.get("event_type"):
-                lines.append(f"  Type: {event_info['event_type']}")
-            lines.append("")
-        
-        # Vendors section — listed BEFORE payments so LLM sees them first
+            parts = [f"Name: {event_info['name']}" if event_info.get("name") else None,
+                     f"Date: {event_info['event_date']}" if event_info.get("event_date") else None,
+                     f"Location: {event_info['location']}" if event_info.get("location") else None]
+            if not compact:
+                parts += [f"Start: {event_info['start_date']}" if event_info.get("start_date") else None,
+                          f"End: {event_info['end_date']}" if event_info.get("end_date") else None,
+                          f"Type: {event_info['event_type']}" if event_info.get("event_type") else None]
+            lines.append("EVENT: " + ", ".join(p for p in parts if p))
+
         vendors = context.get("vendors", [])
         if vendors:
-            lines.append(f"BOOKED VENDORS ({len(vendors)} total):")
+            lines.append(f"VENDORS ({len(vendors)}):")
             for v in vendors[:10]:
-                notes_str = f" | notes: {v['notes']}" if v.get("notes") else ""
-                contact_str = f" | contact: {v['contact_info']}" if v.get("contact_info") else ""
-                lines.append(f"  - VENDOR_ID={v['id']} | {v['name']} ({v.get('category', 'General')}){notes_str}{contact_str}")
+                if compact:
+                    lines.append(f"  {v['id']}|{v['name']}|{v.get('category','')}")
+                else:
+                    extras = []
+                    if v.get("notes"): extras.append(f"notes:{v['notes']}")
+                    if v.get("contact_info"): extras.append(f"contact:{v['contact_info']}")
+                    extra_str = " | " + " | ".join(extras) if extras else ""
+                    lines.append(f"  {v['id']}|{v['name']} ({v.get('category','General')}){extra_str}")
         else:
-            lines.append("BOOKED VENDORS: None added yet")
+            lines.append("VENDORS: none")
 
-        # Payments section
         payments = context.get("payments", [])
-        paid_payments = [p for p in payments if p.get("is_paid")]
-        unpaid_payments = [p for p in payments if not p.get("is_paid")]
+        paid = [p for p in payments if p.get("is_paid")]
+        unpaid = [p for p in payments if not p.get("is_paid")]
 
-        if paid_payments:
-            lines.append(f"\nCOMPLETED PAYMENTS ({len(paid_payments)}):")
-            for p in paid_payments[:10]:
-                method_str = f" via {p['method']}" if p.get("method") else ""
-                lines.append(f"  - PAYMENT_ID={p['id']} | ${p['amount']:.2f} to {p['vendor_name']} (paid {p['paid_date']}){method_str}")
+        if paid:
+            lines.append(f"PAID ({len(paid)}):")
+            for p in paid[:10]:
+                m = f" {p['method']}" if p.get("method") else ""
+                lines.append(f"  {p['id']}|${p['amount']:.0f}|{p['vendor_name']}|{p['paid_date']}{m}")
         else:
-            lines.append("\nCOMPLETED PAYMENTS: None recorded yet")
+            lines.append("PAID: none")
 
-        if unpaid_payments:
-            lines.append(f"\nPENDING PAYMENTS ({len(unpaid_payments)}):")
-            for p in unpaid_payments[:10]:
-                lines.append(f"  - PAYMENT_ID={p['id']} | ${p['amount']:.2f} to {p['vendor_name']} (due {p.get('due_date', 'TBD')})")
+        if unpaid:
+            lines.append(f"PENDING ({len(unpaid)}):")
+            for p in unpaid[:10]:
+                lines.append(f"  {p['id']}|${p['amount']:.0f}|{p['vendor_name']}|due:{p.get('due_date','TBD')}")
         else:
-            lines.append("\nPENDING PAYMENTS: None scheduled")
-        
-        # Tasks section
+            lines.append("PENDING: none")
+
         tasks = context.get("tasks", [])
-        pending_tasks = [t for t in tasks if t.get("status", "").lower() in ("pending", "in_progress")]
-        if pending_tasks:
-            lines.append(f"\nOPEN TASKS ({len(pending_tasks)} pending):")
-            for t in pending_tasks[:10]:
-                due = f" (due {t['due_date']})" if t.get('due_date') else ""
-                cat = f" [label: {t['vendor_category']}]" if t.get('vendor_category') else ""
-                lines.append(f"  - TASK_ID={t['id']} | {t['title']}{due}{cat}")
+        open_tasks = [t for t in tasks if t.get("status", "").lower() in ("pending", "in_progress")]
+        if open_tasks:
+            lines.append(f"TASKS ({len(open_tasks)}):")
+            for t in open_tasks[:10]:
+                due = f"|due:{t['due_date']}" if t.get("due_date") else ""
+                cat = f"|{t['vendor_category']}" if t.get("vendor_category") else ""
+                lines.append(f"  {t['id']}|{t['title']}{due}{cat}")
         else:
-            lines.append("\nOPEN TASKS: None")
-        completed_tasks = [t for t in tasks if t.get("status", "").lower() == "completed"]
-        if completed_tasks:
-            lines.append(f"\nCOMPLETED TASKS ({len(completed_tasks)}):")
-            for t in completed_tasks[:5]:
-                cat = f" [label: {t['vendor_category']}]" if t.get('vendor_category') else ""
-                lines.append(f"  - TASK_ID={t['id']} | {t['title']}{cat}")
-        
-        # Sub-events section
+            lines.append("TASKS: none")
+
+        if not compact:
+            completed_tasks = [t for t in tasks if t.get("status", "").lower() == "completed"]
+            if completed_tasks:
+                lines.append(f"DONE ({len(completed_tasks)}):")
+                for t in completed_tasks[:5]:
+                    lines.append(f"  {t['id']}|{t['title']}")
+
         sub_events = context.get("sub_events", [])
         if sub_events:
-            lines.append(f"\nSUB-EVENTS ({len(sub_events)} scheduled):")
+            lines.append(f"SUB-EVENTS ({len(sub_events)}):")
             for se in sub_events:
-                time_str = ""
-                if se.get("start_time"):
-                    time_str = f" at {se['start_time'][:5]}"
-                lines.append(f"  - SUB_EVENT_ID: {se['id']}")
-                lines.append(f"    {se['name']} on {se.get('date', 'TBD')}{time_str}")
-        else:
-            lines.append("\nSUB-EVENTS: None scheduled")
-        
-        # Uploaded documents section
+                time_str = f"|{se['start_time'][:5]}" if se.get("start_time") else ""
+                lines.append(f"  {se['id']}|{se['name']}|{se.get('date','TBD')}{time_str}")
+
         documents = context.get("documents", [])
         if documents:
-            lines.append(f"\nUPLOADED DOCUMENTS ({len(documents)}):")
-            for d in documents[:15]:
-                vendor_str = f" | vendor: {d['vendor_name']}" if d.get("vendor_name") else ""
-                cat_str = f" | category: {d['category']}" if d.get("category") else ""
-                lines.append(f"  - DOC_ID={d['id']} | {d['filename']}{vendor_str}{cat_str}")
-        else:
-            lines.append("\nUPLOADED DOCUMENTS: None uploaded yet")
+            if compact:
+                doc_entries = []
+                for d in documents[:10]:
+                    v = d.get("vendor_name")
+                    entry = d["filename"]
+                    if v:
+                        entry += f" (vendor: {v})"
+                    doc_entries.append(entry)
+                lines.append(f"UPLOADED DOCS ({len(documents)}): {', '.join(doc_entries)}")
+                lines.append("(Use intent=document_query for ANY question about these docs)")
+            else:
+                lines.append(f"DOCS ({len(documents)}):")
+                for d in documents[:15]:
+                    v = f"|{d['vendor_name']}" if d.get("vendor_name") else ""
+                    lines.append(f"  {d['id']}|{d['filename']}{v}")
 
-        lines.append("\n=== END OF DATA ===")
-        
+        lines.append("=== END ===")
         return "\n".join(lines)
     
     def format_context_for_prompt(self, context: dict) -> str:

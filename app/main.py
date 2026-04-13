@@ -70,6 +70,9 @@ app.include_router(attachments.router, prefix="/api/events/{event_id}/attachment
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
 app.include_router(notes.router, prefix="/api/events/{event_id}/notes", tags=["Notes"])
 
+from app.routers import admin
+app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR / "static"), name="static")
 

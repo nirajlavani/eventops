@@ -17,6 +17,8 @@ from app.models.calendar_event import CalendarEvent
 from app.models.event import Event
 from app.models.sub_event import SubEvent
 from app.services.llm_service import LLMService, get_llm_service
+from app.services.metrics import record_metric
+from app.models.ai_metric import MetricType
 from app.schemas.capture import (
     ActionType,
     IntentType,
@@ -57,11 +59,13 @@ class ExtractionService:
             Tuple of (extraction_result, log_id)
         """
         result = await self.llm_service.extract_intent_and_data(
-            user_input, 
+            user_input,
             context,
             conversation_history
         )
-        
+
+        usage = result.pop("_usage", {})
+
         ai_log = AILog(
             event_id=event_id,
             user_input=user_input,
@@ -72,7 +76,22 @@ class ExtractionService:
         db.add(ai_log)
         await db.commit()
         await db.refresh(ai_log)
-        
+
+        await record_metric(
+            db,
+            metric_type=MetricType.EXTRACTION,
+            event_id=event_id,
+            ai_log_id=ai_log.id,
+            model_name=usage.get("model"),
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+            total_tokens=usage.get("total_tokens"),
+            latency_ms=usage.get("latency_ms"),
+            intent=result.get("intent"),
+            confidence=result.get("confidence"),
+            status="success",
+        )
+
         return result, ai_log.id
     
     async def confirm_and_persist(

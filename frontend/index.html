@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EventOps AI</title>
   <link rel="stylesheet" href="/static/css/branding.css">
-  <link rel="stylesheet" href="/static/css/glassmorphism.css?v=31">
+  <link rel="stylesheet" href="/static/css/glassmorphism.css?v=48">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -16,6 +16,7 @@
         <img src="/static/images/logo-white.png" alt="EventOps" class="header-logo">
         <span class="header-brand-text">EventOps</span>
       </div>
+      <button class="ops-trigger-btn" onclick="openAiOpsPanel()" title="AI Ops"><i class="fas fa-terminal"></i></button>
     </header>
 
     <!-- Sub Header: Event Title + Navigation -->
@@ -860,6 +861,59 @@
     </div>
   </div>
 
-  <script src="/static/js/app.js?v=30"></script>
+  <!-- AI Ops Observability Panel -->
+  <div class="ops-overlay" id="opsOverlay">
+    <div class="ops-panel">
+      <div class="ops-header">
+        <h2 class="ops-title"><i class="fas fa-terminal"></i> AI Ops</h2>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="ops-reindex-btn" id="opsReindexBtn" onclick="triggerReindex()" title="Re-index all PDFs with latest extraction"><i class="fas fa-sync-alt"></i> Re-index</button>
+          <button class="ops-close" onclick="closeAiOpsPanel()"><i class="fas fa-times"></i></button>
+        </div>
+      </div>
+
+      <div class="ops-health-bar" id="opsHealthBar"></div>
+
+      <div class="ops-model-bar" id="opsModelBar"></div>
+
+      <div class="ops-stats-row" id="opsStatsRow"></div>
+
+      <div class="ops-charts-row">
+        <div class="ops-card ops-card-wide">
+          <div class="ops-card-label">Activity (7 days)</div>
+          <div class="ops-chart" id="opsActivityChart"></div>
+        </div>
+        <div class="ops-card">
+          <div class="ops-card-label">Intent Distribution</div>
+          <div class="ops-chart" id="opsIntentChart"></div>
+        </div>
+      </div>
+
+      <div class="ops-charts-row">
+        <div class="ops-card">
+          <div class="ops-card-label">RAG Performance</div>
+          <div id="opsRagStats" class="ops-rag-stats"></div>
+        </div>
+        <div class="ops-card ops-card-wide">
+          <div class="ops-card-label">Latency Trend (ms)</div>
+          <div class="ops-chart" id="opsLatencyChart"></div>
+        </div>
+      </div>
+
+      <div class="ops-card">
+        <div class="ops-card-label">Recent Activity</div>
+        <div class="ops-log-wrap">
+          <table class="ops-log-table" id="opsLogTable">
+            <thead><tr>
+              <th>Time</th><th>Type</th><th>Intent</th><th>Tokens</th><th>Latency</th><th>Status</th>
+            </tr></thead>
+            <tbody id="opsLogBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js?v=47"></script>
 </body>
 </html>

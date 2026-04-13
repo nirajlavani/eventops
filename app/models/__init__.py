@@ -7,6 +7,7 @@ from app.models.attachment import Attachment
 from app.models.ai_log import AILog
 from app.models.sub_event import SubEvent
 from app.models.feedback_log import FeedbackLog
+from app.models.ai_metric import AIMetric
 
 __all__ = [
     "Event",
@@ -18,4 +19,5 @@ __all__ = [
     "AILog",
     "SubEvent",
     "FeedbackLog",
+    "AIMetric",
 ]

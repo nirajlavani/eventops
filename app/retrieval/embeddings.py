@@ -1,5 +1,6 @@
 import logging
 import ssl
+import time
 from typing import Optional
 
 import certifi
@@ -78,7 +79,9 @@ class EmbeddingService:
             "input": texts,
         }
 
+        t0 = time.perf_counter()
         response = await client.post(self.base_url, headers=headers, json=payload)
+        latency_ms = int((time.perf_counter() - t0) * 1000)
         if response.status_code != 200:
             logger.error(
                 "Embedding API error: status=%d url=%s body=%s",
@@ -87,6 +90,24 @@ class EmbeddingService:
         response.raise_for_status()
 
         data = response.json()
+        usage = data.get("usage", {})
+        total_tokens = usage.get("total_tokens")
+
+        try:
+            from app.database import async_session_maker
+            from app.models.ai_metric import AIMetric, MetricType
+            async with async_session_maker() as session:
+                session.add(AIMetric(
+                    metric_type=MetricType.EMBEDDING,
+                    model_name=self.model,
+                    total_tokens=total_tokens,
+                    latency_ms=latency_ms,
+                    status="success",
+                ))
+                await session.commit()
+        except Exception as exc:
+            logger.debug("Failed to record embedding metric: %s", exc)
+
         sorted_items = sorted(data["data"], key=lambda x: x["index"])
         return [item["embedding"] for item in sorted_items]
 

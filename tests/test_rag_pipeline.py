@@ -221,7 +221,7 @@ class TestRAGCitationAccuracy:
     def _make_rag_with_mock_llm(self, store, llm_answer: str):
         from unittest.mock import AsyncMock
         mock_llm = AsyncMock()
-        mock_llm._call_api = AsyncMock(return_value=llm_answer)
+        mock_llm._call_api = AsyncMock(return_value=(llm_answer, {}))
         return RAGService(vector_store=store, llm_service=mock_llm)
 
     @pytest.mark.asyncio
@@ -283,7 +283,7 @@ class TestRAGResponseConsistency:
     async def test_same_query_produces_same_citations(self, indexed_store):
         from unittest.mock import AsyncMock
         mock_llm = AsyncMock()
-        mock_llm._call_api = AsyncMock(return_value="The deposit is required upon signing.")
+        mock_llm._call_api = AsyncMock(return_value=("The deposit is required upon signing.", {}))
 
         responses = []
         for _ in range(3):
@@ -318,7 +318,7 @@ class TestRAGServiceEndToEnd:
 
             mock_llm = AsyncMock()
             mock_llm._call_api = AsyncMock(
-                return_value="A deposit is required to secure the date."
+                return_value=("A deposit is required to secure the date.", {})
             )
 
             rag = RAGService(vector_store=store, llm_service=mock_llm)
@@ -711,7 +711,7 @@ class TestRealWorldCitationAccuracy:
     def _make_rag_with_mock_llm(self, store, answer: str):
         from unittest.mock import AsyncMock
         mock_llm = AsyncMock()
-        mock_llm._call_api = AsyncMock(return_value=answer)
+        mock_llm._call_api = AsyncMock(return_value=(answer, {}))
         return RAGService(vector_store=store, llm_service=mock_llm)
 
     @pytest.mark.asyncio
@@ -743,7 +743,7 @@ class TestRealWorldCitationAccuracy:
     async def test_citations_consistent_across_runs(self, real_indexed_store):
         from unittest.mock import AsyncMock
         mock_llm = AsyncMock()
-        mock_llm._call_api = AsyncMock(return_value="The fee is due before the event.")
+        mock_llm._call_api = AsyncMock(return_value=("The fee is due before the event.", {}))
 
         responses = []
         for _ in range(3):
@@ -785,7 +785,7 @@ class TestRealWorldEndToEnd:
             embedding_svc = _make_deterministic_embedding_service()
             store = VectorStore(embedding_service=embedding_svc, persist_dir=chroma_dir)
             mock_llm = AsyncMock()
-            mock_llm._call_api = AsyncMock(return_value="A deposit is required to hold the date.")
+            mock_llm._call_api = AsyncMock(return_value=("A deposit is required to hold the date.", {}))
 
             rag = RAGService(vector_store=store, llm_service=mock_llm)
             count = await rag.index_document(
@@ -818,7 +818,7 @@ class TestRealWorldEndToEnd:
             embedding_svc = _make_deterministic_embedding_service()
             store = VectorStore(embedding_service=embedding_svc, persist_dir=chroma_dir)
             mock_llm = AsyncMock()
-            mock_llm._call_api = AsyncMock(return_value="The officiant will perform the ceremony.")
+            mock_llm._call_api = AsyncMock(return_value=("The officiant will perform the ceremony.", {}))
 
             rag = RAGService(vector_store=store, llm_service=mock_llm)
             count = await rag.index_document(

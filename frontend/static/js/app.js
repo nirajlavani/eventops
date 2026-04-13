@@ -125,6 +125,18 @@ function setupChatAutoCollapse() {
   chatInput.addEventListener('blur', () => {
     resetChatCollapseTimer();
   });
+
+  // Collapse / exit fullscreen when clicking outside the chat panel
+  document.addEventListener('mousedown', (e) => {
+    if (!isChatExpanded || isAITyping) return;
+    if (!aiAssistant.contains(e.target)) {
+      if (isChatFullscreen) {
+        toggleFullscreen();
+      }
+      isChatHovered = false;
+      collapseChat();
+    }
+  });
   
   // Toggle fullscreen when clicking on chat header
   const chatHeader = aiAssistant.querySelector('.chat-header');
@@ -192,7 +204,6 @@ function resetChatCollapseTimer() {
 }
 
 function collapseChat() {
-  // Don't collapse if mouse is hovering, AI is typing, or fullscreen
   if (isChatHovered || isAITyping || isChatFullscreen) {
     return;
   }
@@ -927,6 +938,43 @@ function handleCaptureKeypress(event) {
   if (event.key === 'Enter') submitCapture();
 }
 
+async function _streamExtract(text) {
+  const resp = await fetch(`${API_BASE}/api/events/${currentEventId}/capture/extract/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, conversation_history: conversationHistory }),
+  });
+  if (!resp.ok) throw new Error(`Stream HTTP ${resp.status}`);
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let result = null;
+  let firstDelta = true;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const payload = line.slice(6).trim();
+      if (payload === '[DONE]') continue;
+      try {
+        const evt = JSON.parse(payload);
+        if (evt.type === 'delta') {
+          if (firstDelta) { updateTypingStatus('Eve is typing...'); firstDelta = false; }
+        } else if (evt.type === 'result') {
+          result = evt.data;
+        }
+      } catch (_) {}
+    }
+  }
+  if (!result) throw new Error('No result from stream');
+  return result;
+}
+
 async function submitCapture() {
   const input = document.getElementById('captureInput');
   const text = input.value.trim();
@@ -946,36 +994,21 @@ async function submitCapture() {
   
   addToConversationHistory('user', text);
   
-  const typingMessages = [
-    'Got it, let me process that...',
-    'Working on it...',
-    'Configuring that for you...',
-    'Processing your request...',
-    'Let me see what I can do...',
-    'Almost there...',
-  ];
-  const shuffled = typingMessages.slice(0, -1).sort(() => Math.random() - 0.5);
-  shuffled.push('Almost there...');
-  
-  showTypingIndicator(shuffled[0]);
-  
-  for (let i = 1; i < shuffled.length; i++) {
-    const msg = shuffled[i];
-    const delay = i * 3000;
-    setTimeout(() => { if (isAITyping) updateTypingStatus(msg); }, delay);
-  }
-  
+  showTypingIndicator('Processing...');
+
   try {
-    const response = await fetch(`${API_BASE}/api/events/${currentEventId}/capture/extract`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        text,
-        conversation_history: conversationHistory
-      })
-    });
-    
-    const result = await response.json();
+    let result;
+    try {
+      result = await _streamExtract(text);
+    } catch (streamErr) {
+      console.warn('Stream fallback to standard extract:', streamErr);
+      const resp = await fetch(`${API_BASE}/api/events/${currentEventId}/capture/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, conversation_history: conversationHistory }),
+      });
+      result = await resp.json();
+    }
     hideTypingIndicator();
     
     // Log referenced records for debugging (if available)
@@ -995,8 +1028,9 @@ async function submitCapture() {
     }
     
     // Handle document query with structured citations
-    if (result.intent === 'document_query' && result.data?.citations?.length) {
-      const html = formatDocumentAnswer(result.assistant_message || '', result.data.citations);
+    if (result.intent === 'document_query') {
+      const citations = result.data?.citations || [];
+      const html = formatDocumentAnswer(result.assistant_message || '', citations);
       addMessage(html, 'ai', true);
       addToConversationHistory('assistant', result.assistant_message || '');
       return;
@@ -4016,11 +4050,14 @@ async function handleFileUploads(fileList) {
 
   let successCount = 0;
   let errorCount = 0;
+  const pdfAttachmentIds = [];
 
   for (const file of fileList) {
     try {
-      await uploadSingleFile(file);
+      const result = await uploadSingleFile(file);
       successCount++;
+      const ext = file.name?.split('.').pop()?.toLowerCase() || '';
+      if (ext === 'pdf') pdfAttachmentIds.push(result.id);
     } catch (error) {
       errorCount++;
       console.error('Upload failed:', file.name, error);
@@ -4032,7 +4069,10 @@ async function handleFileUploads(fileList) {
 
   if (successCount > 0) {
     showToast(`Uploaded ${successCount} file${successCount > 1 ? 's' : ''}`, 'success');
-    loadFilesV2();
+    await loadFilesV2();
+    for (const attId of pdfAttachmentIds) {
+      pollIndexingStatus(attId);
+    }
   }
   if (errorCount > 0) {
     showToast(`${errorCount} file${errorCount > 1 ? 's' : ''} failed to upload`, 'error');
@@ -4058,12 +4098,6 @@ async function uploadSingleFile(file, metadata = {}) {
   }
 
   const result = await response.json();
-
-  const ext = file.name?.split('.').pop()?.toLowerCase() || '';
-  if (ext === 'pdf') {
-    setTimeout(() => pollIndexingStatus(result.id), 500);
-  }
-
   return result;
 }
 
@@ -4391,10 +4425,13 @@ async function uploadFileForVendor(vendorId) {
     if (input.files.length === 0) return;
 
     let successCount = 0;
+    const pdfIds = [];
     for (const file of input.files) {
       try {
-        await uploadSingleFile(file, { vendor_id: vendorId });
+        const result = await uploadSingleFile(file, { vendor_id: vendorId });
         successCount++;
+        const ext = file.name?.split('.').pop()?.toLowerCase() || '';
+        if (ext === 'pdf') pdfIds.push(result.id);
       } catch (error) {
         console.error('Vendor upload failed:', error);
       }
@@ -4402,9 +4439,276 @@ async function uploadFileForVendor(vendorId) {
 
     if (successCount > 0) {
       showToast(`Uploaded ${successCount} file${successCount > 1 ? 's' : ''} for vendor`, 'success');
+      await loadFilesV2();
       loadPaymentsV2();
+      for (const attId of pdfIds) pollIndexingStatus(attId);
     }
   });
 
   input.click();
+}
+
+/* ── AI Ops Panel ── */
+
+function openAiOpsPanel() {
+  const overlay = document.getElementById('opsOverlay');
+  if (!overlay) return;
+  overlay.classList.add('show');
+  loadOpsData();
+}
+
+function closeAiOpsPanel() {
+  const overlay = document.getElementById('opsOverlay');
+  if (overlay) overlay.classList.remove('show');
+}
+
+async function loadOpsData() {
+  try {
+    const [summaryRes, recentRes, healthRes] = await Promise.all([
+      fetch(`${API_BASE}/api/admin/metrics/summary?days=7`),
+      fetch(`${API_BASE}/api/admin/metrics/recent?limit=50`),
+      fetch(`${API_BASE}/api/admin/metrics/health`),
+    ]);
+    const summary = await summaryRes.json();
+    const recent = await recentRes.json();
+    const health = await healthRes.json();
+
+    renderOpsHealth(health);
+    renderOpsModel(summary);
+    renderOpsStats(summary);
+    renderOpsActivityChart(summary.daily);
+    renderOpsIntentChart(summary.intent_breakdown);
+    renderOpsLatencyChart(summary.daily);
+    renderOpsRag(summary);
+    renderOpsLog(recent);
+  } catch (err) {
+    console.error('Failed to load AI Ops data:', err);
+  }
+}
+
+function renderOpsHealth(h) {
+  const el = document.getElementById('opsHealthBar');
+  let cls = 'healthy', icon = 'fa-check-circle', label = 'All Systems Operational';
+  if (h.error_rate_1h > 0.5) { cls = 'down'; icon = 'fa-exclamation-triangle'; label = 'High Error Rate'; }
+  else if (h.error_rate_1h > 0.1) { cls = 'degraded'; icon = 'fa-exclamation-circle'; label = 'Degraded Performance'; }
+  const p50 = h.p50_latency_ms != null ? `${h.p50_latency_ms}ms` : '—';
+  const p95 = h.p95_latency_ms != null ? `${h.p95_latency_ms}ms` : '—';
+  el.className = `ops-health-bar ${cls}`;
+  el.innerHTML = `<i class="fas ${icon}"></i> ${label} <span style="margin-left:auto;font-weight:400;opacity:0.8">p50 ${p50} · p95 ${p95} · ${h.total_calls_1h} calls/hr</span>`;
+}
+
+function renderOpsModel(s) {
+  const el = document.getElementById('opsModelBar');
+  const models = s.models_used || {};
+  const entries = Object.entries(models).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0 && !s.primary_model) { el.innerHTML = ''; return; }
+  if (entries.length === 0) {
+    el.innerHTML = `<span style="color:#a08070">Model</span> <span class="ops-model-badge"><i class="fas fa-microchip"></i> ${s.primary_model}</span>`;
+    return;
+  }
+  const badges = entries.map(([name, count]) => {
+    const short = name.replace(/^google\//, '').replace(/^openai\//, '');
+    return `<span class="ops-model-badge"><i class="fas fa-microchip"></i> ${short} <span style="opacity:0.6">(${count})</span></span>`;
+  }).join('');
+  el.innerHTML = `<span style="color:#a08070">Models</span> ${badges}`;
+}
+
+function renderOpsStats(s) {
+  const el = document.getElementById('opsStatsRow');
+  const errPct = (s.error_rate * 100).toFixed(1);
+  const lbt = s.latency_by_type || {};
+  const extMs = lbt.extraction_ms != null ? `${lbt.extraction_ms.toFixed(0)}ms` : '—';
+  const ragMs = lbt.rag_query_ms != null ? `${lbt.rag_query_ms.toFixed(0)}ms` : '—';
+  const embMs = lbt.embedding_ms != null ? `${lbt.embedding_ms.toFixed(0)}ms` : '—';
+  el.innerHTML = `
+    <div class="ops-stat"><span class="ops-stat-value">${s.total_llm_calls}</span><span class="ops-stat-label">Total Calls</span></div>
+    <div class="ops-stat"><span class="ops-stat-value">${formatNumber(s.total_tokens)}</span><span class="ops-stat-label">Tokens Used</span></div>
+    <div class="ops-stat"><span class="ops-stat-value">$${s.estimated_cost_usd.toFixed(4)}</span><span class="ops-stat-label">Est. Cost</span></div>
+    <div class="ops-stat"><span class="ops-stat-value">${s.avg_latency_ms.toFixed(0)}<small>ms</small></span><span class="ops-stat-label">Avg Latency</span></div>
+    <div class="ops-stat"><span class="ops-stat-value">${errPct}%</span><span class="ops-stat-label">Error Rate</span></div>
+  `;
+
+  let breakdownEl = document.getElementById('opsLatencyBreakdown');
+  if (!breakdownEl) {
+    breakdownEl = document.createElement('div');
+    breakdownEl.id = 'opsLatencyBreakdown';
+    breakdownEl.className = 'ops-stats-row';
+    breakdownEl.style.marginTop = '8px';
+    el.parentNode.insertBefore(breakdownEl, el.nextSibling);
+  }
+  breakdownEl.innerHTML = `
+    <div class="ops-stat"><span class="ops-stat-value">${extMs}</span><span class="ops-stat-label">Extraction</span></div>
+    <div class="ops-stat"><span class="ops-stat-value">${ragMs}</span><span class="ops-stat-label">RAG Query</span></div>
+    <div class="ops-stat"><span class="ops-stat-value">${embMs}</span><span class="ops-stat-label">Embedding</span></div>
+  `;
+}
+
+function renderOpsActivityChart(daily) {
+  const el = document.getElementById('opsActivityChart');
+  if (!daily || daily.length === 0) { el.innerHTML = '<div style="color:#a08070;font-size:0.8rem;padding:20px">No data yet</div>'; return; }
+  const maxVal = Math.max(...daily.map(d => d.extractions + d.rag_queries + d.embeddings), 1);
+  const vw = 500, h = 120;
+  const padBot = 20, padTop = 22;
+  const barW = vw / Math.max(daily.length, 1);
+  let bars = '';
+  daily.forEach((d, i) => {
+    const total = d.extractions + d.rag_queries + d.embeddings;
+    const barH = Math.max((total / maxVal) * (h - padTop - padBot), 3);
+    const x = i * barW + barW * 0.15;
+    const w = barW * 0.7;
+    const barY = h - padBot - barH;
+    const dayLabel = d.date.slice(5);
+    bars += `<rect x="${x}" y="${barY}" width="${w}" height="${barH}" rx="3" fill="var(--accent-orange,#FF9F1C)" opacity="0.85"/>`;
+    bars += `<text x="${x + w / 2}" y="${barY - 5}" text-anchor="middle" fill="#e8ddd4" font-size="12" font-weight="600" font-family="var(--font-body)">${total}</text>`;
+    bars += `<text x="${x + w / 2}" y="${h - 4}" text-anchor="middle" fill="#a08070" font-size="11" font-family="var(--font-body)">${dayLabel}</text>`;
+  });
+  el.innerHTML = `<svg width="100%" height="${h}" viewBox="0 0 ${vw} ${h}" preserveAspectRatio="xMidYMid meet">${bars}</svg>`;
+}
+
+function renderOpsIntentChart(breakdown) {
+  const el = document.getElementById('opsIntentChart');
+  if (!breakdown || breakdown.length === 0) { el.innerHTML = '<div style="color:#a08070;font-size:0.8rem;padding:20px">No data yet</div>'; return; }
+  const maxCount = Math.max(...breakdown.map(b => b.count), 1);
+  const colors = ['#FF9F1C', '#733635', '#CB997E', '#A0C9CB', '#87A878', '#FFBF69', '#D4A373', '#B4A7D6'];
+  let html = '';
+  breakdown.slice(0, 8).forEach((b, i) => {
+    const pct = (b.count / maxCount) * 100;
+    const c = colors[i % colors.length];
+    html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="width:110px;flex-shrink:0;font-size:0.75rem;color:#d5ccc4">${b.intent}</span>
+      <div style="flex:1;height:14px;background:rgba(255,255,255,0.08);border-radius:7px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${c};border-radius:7px;transition:width 0.6s ease"></div>
+      </div>
+      <span style="width:28px;flex-shrink:0;text-align:right;font-size:0.72rem;color:#a08070">${b.count}</span>
+    </div>`;
+  });
+  el.innerHTML = html;
+}
+
+function renderOpsLatencyChart(daily) {
+  const el = document.getElementById('opsLatencyChart');
+  if (!daily || daily.length === 0) { el.innerHTML = '<div style="color:#a08070;font-size:0.8rem;padding:20px">No data yet</div>'; return; }
+  const latencies = daily.map(d => d.avg_latency_ms);
+  const maxL = Math.max(...latencies, 1);
+  const vw = 500, h = 120;
+  const padTop = 22, padBot = 20;
+  const usableH = h - padTop - padBot;
+  let points = '';
+  let area = `M 0 ${h - padBot} `;
+  daily.forEach((d, i) => {
+    const x = daily.length > 1 ? (i / (daily.length - 1)) * vw : vw / 2;
+    const y = padTop + usableH - (d.avg_latency_ms / maxL) * usableH;
+    const ms = d.avg_latency_ms;
+    const label = ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms.toFixed(0) + 'ms';
+    const color = ms > 10000 ? '#e85d5d' : ms > 5000 ? '#FF9F1C' : '#87A878';
+    points += `<circle cx="${x}" cy="${y}" r="5" fill="${color}"/>`;
+    points += `<text x="${x}" y="${y - 10}" text-anchor="middle" fill="#e8ddd4" font-size="12" font-weight="600" font-family="var(--font-body)">${label}</text>`;
+    points += `<text x="${x}" y="${h - 4}" text-anchor="middle" fill="#a08070" font-size="11" font-family="var(--font-body)">${d.date.slice(5)}</text>`;
+    area += `L ${x} ${y} `;
+  });
+  area += `L ${vw} ${h - padBot} Z`;
+  const line = daily.map((d, i) => {
+    const x = daily.length > 1 ? (i / (daily.length - 1)) * vw : vw / 2;
+    const y = padTop + usableH - (d.avg_latency_ms / maxL) * usableH;
+    return `${x},${y}`;
+  }).join(' ');
+  el.innerHTML = `<svg width="100%" height="${h}" viewBox="0 0 ${vw} ${h}" preserveAspectRatio="xMidYMid meet">
+    <path d="${area}" fill="rgba(255,159,28,0.12)"/>
+    <polyline points="${line}" fill="none" stroke="var(--accent-orange,#FF9F1C)" stroke-width="2.5" stroke-linejoin="round"/>
+    ${points}
+  </svg>`;
+}
+
+function renderOpsRag(s) {
+  const el = document.getElementById('opsRagStats');
+  const score = s.avg_rag_score != null ? s.avg_rag_score.toFixed(3) : '—';
+  const chunks = s.avg_rag_chunks_returned != null ? s.avg_rag_chunks_returned.toFixed(1) : '—';
+  el.innerHTML = `
+    <div class="ops-rag-item"><span class="ops-stat-value">${s.total_rag_queries}</span><span class="ops-stat-label">Queries</span></div>
+    <div class="ops-rag-item"><span class="ops-stat-value">${score}</span><span class="ops-stat-label">Avg Score</span></div>
+    <div class="ops-rag-item"><span class="ops-stat-value">${chunks}</span><span class="ops-stat-label">Avg Chunks</span></div>
+    <div class="ops-rag-item">
+      <span class="ops-stat-value">${Object.entries(s.extraction_statuses).map(([k,v]) => `${v}`).join(' / ')}</span>
+      <span class="ops-stat-label">${Object.keys(s.extraction_statuses).map(k => k.replace(/.*\./, '')).join(' / ')}</span>
+    </div>
+  `;
+}
+
+function renderOpsLog(recent) {
+  const tbody = document.getElementById('opsLogBody');
+  if (!recent || recent.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#a08070;padding:20px">No activity yet — start chatting with Eve!</td></tr>';
+    return;
+  }
+  tbody.innerHTML = recent.map(r => {
+    const t = new Date(r.created_at);
+    const timeStr = t.toLocaleString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    const typeLabel = r.metric_type.replace('_', ' ');
+    const tokens = r.total_tokens != null ? formatNumber(r.total_tokens) : '—';
+    const latency = r.latency_ms != null ? `${formatNumber(r.latency_ms)}ms` : '—';
+    const statusCls = r.status === 'success' ? 'success' : r.status === 'error' ? 'error' : 'pending';
+    return `<tr>
+      <td>${timeStr}</td>
+      <td>${typeLabel}</td>
+      <td>${r.intent || '—'}</td>
+      <td>${tokens}</td>
+      <td>${latency}</td>
+      <td><span class="ops-status-badge ${statusCls}">${r.status || '—'}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+document.getElementById('opsOverlay')?.addEventListener('click', (e) => {
+  if (e.target.id === 'opsOverlay') closeAiOpsPanel();
+});
+
+async function triggerReindex() {
+  const btn = document.getElementById('opsReindexBtn');
+  const icon = btn.querySelector('.fa-sync-alt');
+  btn.disabled = true;
+  icon.classList.add('spinning');
+  btn.innerHTML = '<i class="fas fa-sync-alt spinning"></i> Re-indexing…';
+
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/reindex`, { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'already_running') {
+      btn.innerHTML = '<i class="fas fa-sync-alt spinning"></i> In progress…';
+    } else if (data.status === 'no_pdfs') {
+      btn.innerHTML = '<i class="fas fa-sync-alt"></i> No PDFs';
+      setTimeout(() => { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt"></i> Re-index'; }, 3000);
+      return;
+    }
+    pollReindexStatus();
+  } catch (err) {
+    console.error('Re-index trigger failed:', err);
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-sync-alt"></i> Re-index';
+  }
+}
+
+async function pollReindexStatus() {
+  const btn = document.getElementById('opsReindexBtn');
+  const poll = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/reindex/status`);
+      const data = await res.json();
+      if (data.running) {
+        btn.innerHTML = `<i class="fas fa-sync-alt spinning"></i> ${data.done}/${data.total}`;
+        setTimeout(poll, 1500);
+      } else {
+        const errCount = data.errors ? data.errors.length : 0;
+        const label = errCount ? `Done (${errCount} errors)` : 'Done!';
+        btn.innerHTML = `<i class="fas fa-check"></i> ${label}`;
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-sync-alt"></i> Re-index';
+        }, 4000);
+      }
+    } catch {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-sync-alt"></i> Re-index';
+    }
+  };
+  setTimeout(poll, 1500);
 }

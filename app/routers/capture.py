@@ -1,6 +1,10 @@
+import hashlib
+import json
 import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,9 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 
 logger = logging.getLogger(__name__)
+
+_QUERY_CACHE: dict[str, tuple[float, dict]] = {}
+_CACHE_TTL_S = 300
+_CACHE_MAX_ENTRIES = 128
 from app.models.event import Event
+from app.models.ai_metric import MetricType
 from app.services.extraction import ExtractionService, get_extraction_service
 from app.services.context_service import ContextService, get_context_service
+from app.services.metrics import record_metric
 from app.schemas.capture import (
     ActionType,
     CaptureRequest,
@@ -70,10 +80,20 @@ async def extract_from_text(
     - reference_id: ID of existing record to update (if action=update)
     """
     await get_event_or_404(event_id, db)
-    
+
+    cache_key = hashlib.sha256(f"{event_id}:{request.text.strip().lower()}".encode()).hexdigest()
+    now = time.monotonic()
+    cached = _QUERY_CACHE.get(cache_key)
+    if cached:
+        ts, cached_response = cached
+        if now - ts < _CACHE_TTL_S:
+            logger.info("Cache hit for query: key=%s", cache_key[:12])
+            return CaptureResponse(**cached_response)
+        del _QUERY_CACHE[cache_key]
+
     # Get full context including payments, vendors, tasks, and sub-events
     full_context = await context_service.get_full_context(event_id, db)
-    context_str = context_service.format_full_context_for_prompt(full_context)
+    context_str = context_service.format_full_context_for_prompt(full_context, compact=True)
     
     logger.info(f"Full context for event {event_id}: payments={len(full_context.get('payments', []))}, vendors={len(full_context.get('vendors', []))}, tasks={len(full_context.get('tasks', []))}, sub_events={len(full_context.get('sub_events', []))}")
     logger.debug(f"Formatted context:\n{context_str}")
@@ -184,6 +204,21 @@ async def extract_from_text(
                     "Document query succeeded: %d citations, has_results=%s",
                     len(citations_dicts), rag_response.has_results,
                 )
+                await record_metric(
+                    db,
+                    metric_type=MetricType.RAG_QUERY,
+                    event_id=event_id,
+                    model_name=rag_response.llm_usage.get("model"),
+                    prompt_tokens=rag_response.llm_usage.get("prompt_tokens"),
+                    completion_tokens=rag_response.llm_usage.get("completion_tokens"),
+                    total_tokens=rag_response.llm_usage.get("total_tokens"),
+                    latency_ms=rag_response.latency_ms,
+                    intent="document_query",
+                    status="success",
+                    rag_top_score=rag_response.top_score,
+                    rag_chunks_searched=rag_response.chunks_searched,
+                    rag_chunks_returned=rag_response.chunks_returned,
+                )
             except Exception as e:
                 logger.error(
                     "RAG query failed: event=%s query=%r error=%s",
@@ -210,7 +245,7 @@ async def extract_from_text(
             parsed_data = UnknownData()
             intent = IntentType.UNKNOWN
     
-    return CaptureResponse(
+    response = CaptureResponse(
         intent=intent,
         action=action,
         confidence=result.get("confidence", 0.0),
@@ -226,6 +261,155 @@ async def extract_from_text(
         secondary_actions=secondary_actions,
         log_id=log_id,
     )
+
+    if intent in (IntentType.QUERY, IntentType.CONVERSATION):
+        if len(_QUERY_CACHE) >= _CACHE_MAX_ENTRIES:
+            oldest = min(_QUERY_CACHE, key=lambda k: _QUERY_CACHE[k][0])
+            del _QUERY_CACHE[oldest]
+        _QUERY_CACHE[cache_key] = (time.monotonic(), response.model_dump(mode="json"))
+
+    return response
+
+
+@router.post("/extract/stream")
+async def extract_stream(
+    event_id: str,
+    request: CaptureRequest,
+    db: AsyncSession = Depends(get_db),
+    context_service: ContextService = Depends(get_context_service),
+):
+    """SSE streaming extraction: yields token deltas then the full result."""
+    from app.services.llm_service import LLMService, ExtractionResult, ModelTier
+    from app.models.ai_log import AILog, AILogStatus
+    from app.services.metrics import record_metric as _rec
+    from datetime import date as _date
+
+    await get_event_or_404(event_id, db)
+
+    full_context = await context_service.get_full_context(event_id, db)
+    context_str = context_service.format_full_context_for_prompt(full_context, compact=True)
+
+    conversation_history = None
+    if request.conversation_history:
+        conversation_history = [
+            {"role": msg.role, "content": msg.content}
+            for msg in request.conversation_history
+        ]
+
+    llm = LLMService()
+    today = _date.today().isoformat()
+    context_or = context_str or "No existing records for context."
+    history_str = "No previous conversation."
+    if conversation_history:
+        lines = ["Recent conversation (for context):"]
+        for msg in conversation_history[-6:]:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            lines.append(f"User: {content}" if role == "user" else f"Assistant: {content}")
+        history_str = "\n".join(lines)
+
+    system_prompt = llm.EXTRACTION_PROMPT.format(
+        today=today, context=context_or, conversation_history=history_str,
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": request.text},
+    ]
+
+    async def event_generator():
+        collected = []
+        usage_info = {}
+        async for delta, usage in llm._call_api_stream(messages, max_tokens=1024, tier=ModelTier.BALANCED):
+            if usage is not None:
+                usage_info.update(usage)
+            if delta:
+                collected.append(delta)
+                yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
+
+        full_text = "".join(collected)
+        try:
+            raw = llm._extract_json(full_text)
+            validated = ExtractionResult(**raw)
+            result = validated.model_dump()
+        except Exception:
+            result = llm._get_unknown_result("Stream parse failed")
+
+        ai_log = AILog(
+            event_id=event_id, user_input=request.text,
+            llm_output=json.dumps(result),
+            intent=result.get("intent"), status=AILogStatus.PENDING,
+        )
+        db.add(ai_log)
+        await db.commit()
+        await db.refresh(ai_log)
+
+        await _rec(
+            db, metric_type=MetricType.EXTRACTION, event_id=event_id,
+            ai_log_id=ai_log.id, model_name=usage_info.get("model"),
+            latency_ms=usage_info.get("latency_ms"),
+            intent=result.get("intent"), confidence=result.get("confidence"),
+            status="success",
+        )
+
+        if result.get("intent") == "document_query":
+            try:
+                from app.retrieval.rag_service import RAGService
+                rag = RAGService()
+                data = result.get("data") or {}
+                query_text = data.get("query", request.text)
+                vendor_filter = data.get("vendor_name")
+                logger.info(
+                    "Stream document_query: event=%s query=%r vendor=%s",
+                    event_id, query_text[:100], vendor_filter,
+                )
+                rag_response = await rag.query(
+                    event_id=event_id,
+                    question=query_text,
+                    vendor_name=vendor_filter,
+                )
+                citations_dicts = [
+                    {
+                        "text": c.text,
+                        "document_name": c.document_name,
+                        "page_number": c.page_number,
+                        "section_title": c.section_title,
+                        "vendor_name": c.vendor_name,
+                        "score": c.score,
+                    }
+                    for c in rag_response.citations
+                ]
+                result["assistant_message"] = rag_response.answer
+                result["response_mode"] = "answer"
+                result["data"] = {
+                    "query": query_text,
+                    "vendor_name": vendor_filter,
+                    "citations": citations_dicts,
+                }
+                await _rec(
+                    db, metric_type=MetricType.RAG_QUERY, event_id=event_id,
+                    model_name=rag_response.llm_usage.get("model"),
+                    prompt_tokens=rag_response.llm_usage.get("prompt_tokens"),
+                    completion_tokens=rag_response.llm_usage.get("completion_tokens"),
+                    total_tokens=rag_response.llm_usage.get("total_tokens"),
+                    latency_ms=rag_response.latency_ms,
+                    intent="document_query", status="success",
+                    rag_top_score=rag_response.top_score,
+                    rag_chunks_searched=rag_response.chunks_searched,
+                    rag_chunks_returned=rag_response.chunks_returned,
+                )
+            except Exception as e:
+                logger.error("Stream RAG query failed: %s", e, exc_info=True)
+                result["assistant_message"] = (
+                    "I wasn't able to search your documents right now. "
+                    "Please make sure you've uploaded the relevant files and try again."
+                )
+                result["response_mode"] = "answer"
+
+        result["log_id"] = ai_log.id
+        yield f"data: {json.dumps({'type': 'result', 'data': result})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post("/confirm", response_model=ConfirmResponse)
