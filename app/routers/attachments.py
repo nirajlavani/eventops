@@ -1,13 +1,16 @@
 import os
 import uuid
+import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, Form, Query, status
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+logger = logging.getLogger(__name__)
 
 from app.config import get_settings
 from app.database import get_db
@@ -18,6 +21,8 @@ from app.models.attachment import Attachment
 from app.schemas.attachment import AttachmentResponse, AttachmentUpdate
 
 router = APIRouter()
+
+_indexing_status: Dict[str, dict] = {}
 
 ALLOWED_EXTENSIONS = {
     "pdf", "jpg", "jpeg", "png", "gif", "webp",
@@ -92,6 +97,7 @@ def _enrich_response(attachment: Attachment) -> AttachmentResponse:
 @router.post("", response_model=AttachmentResponse, status_code=status.HTTP_201_CREATED)
 async def upload_attachment(
     event_id: str,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     description: Optional[str] = Form(None),
     category: Optional[str] = Form(None),
@@ -150,7 +156,58 @@ async def upload_attachment(
         .where(Attachment.id == attachment.id)
     )
     attachment = result.scalar_one()
+
+    logger.info(
+        "Uploaded attachment: id=%s event=%s file=%s size=%d ext=%s",
+        attachment.id, event_id, original, len(contents), ext,
+    )
+
+    if ext == "pdf":
+        _indexing_status[attachment.id] = {"stage": "pending", "percent": 0}
+        logger.info("Queuing PDF indexing for attachment %s", attachment.id)
+        background_tasks.add_task(
+            _run_indexing, event_id, attachment.id,
+            str(file_path), original,
+            attachment.vendor.name if attachment.vendor else None,
+        )
+
     return _enrich_response(attachment)
+
+
+async def _run_indexing(
+    event_id: str, att_id: str, file_path: str, doc_name: str, vendor_name: Optional[str],
+) -> None:
+    """Background task: index a PDF into the vector store with progress tracking."""
+    try:
+        from app.retrieval.rag_service import RAGService
+        rag = RAGService()
+
+        def _on_progress(stage: str, pct: int) -> None:
+            _indexing_status[att_id] = {"stage": stage, "percent": pct}
+            logger.info("Indexing %s: %s (%d%%)", doc_name, stage, pct)
+
+        count = await rag.index_document(
+            event_id=event_id,
+            attachment_id=att_id,
+            file_path=file_path,
+            document_name=doc_name,
+            vendor_name=vendor_name,
+            on_progress=_on_progress,
+        )
+        _indexing_status[att_id] = {"stage": "done", "percent": 100, "chunks": count}
+        logger.info("Indexed PDF %s: %d chunks", doc_name, count)
+    except Exception as e:
+        _indexing_status[att_id] = {"stage": "error", "percent": 0, "error": str(e)}
+        logger.error("Failed to index PDF %s: %s", doc_name, str(e), exc_info=True)
+
+
+@router.get("/{attachment_id}/indexing-status")
+async def get_indexing_status(attachment_id: str) -> JSONResponse:
+    """Return the current indexing progress for a PDF attachment."""
+    status = _indexing_status.get(attachment_id)
+    if status is None:
+        return JSONResponse({"stage": "none", "percent": 0})
+    return JSONResponse(status)
 
 
 @router.get("", response_model=List[AttachmentResponse])
@@ -214,9 +271,14 @@ async def get_attachment(
 async def download_attachment(
     event_id: str,
     attachment_id: str,
+    inline: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download the actual file."""
+    """Download or preview the actual file.
+
+    Pass ?inline=true to serve the file for in-browser preview
+    (Content-Disposition: inline) instead of forcing a download.
+    """
     await _get_event_or_404(event_id, db)
 
     result = await db.execute(
@@ -230,10 +292,19 @@ async def download_attachment(
     if not file_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found on disk")
 
+    media = attachment.content_type or "application/octet-stream"
+
+    if inline:
+        return FileResponse(
+            path=str(file_path),
+            media_type=media,
+            content_disposition_type="inline",
+        )
+
     return FileResponse(
         path=str(file_path),
         filename=attachment.original_filename,
-        media_type=attachment.content_type or "application/octet-stream",
+        media_type=media,
     )
 
 
@@ -300,9 +371,21 @@ async def delete_attachment(
     if not attachment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
 
+    try:
+        from app.retrieval.rag_service import RAGService
+        rag = RAGService()
+        removed = rag.delete_document(event_id, attachment_id)
+        logger.info("Deleted %d indexed chunks for attachment %s", removed, attachment_id)
+    except Exception as e:
+        logger.error(
+            "Failed to remove indexed chunks: attachment=%s error=%s",
+            attachment_id, str(e), exc_info=True,
+        )
+
     file_path = Path(attachment.file_path)
     if file_path.exists():
         os.remove(file_path)
 
+    logger.info("Deleted attachment %s from event %s", attachment_id, event_id)
     await db.delete(attachment)
     await db.commit()

@@ -21,6 +21,8 @@ from app.schemas.capture import (
     VendorData,
     SubEventUpdateData,
     EventUpdateData,
+    DocumentQueryData,
+    CitationData,
     IntentType,
 )
 from app.schemas.dashboard import (
@@ -69,6 +71,8 @@ __all__ = [
     "SubEventUpdateData",
     "EventUpdateData",
     "IntentType",
+    "DocumentQueryData",
+    "CitationData",
     "DashboardResponse",
     "UpcomingPayment",
     "OpenTask",

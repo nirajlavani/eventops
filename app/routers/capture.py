@@ -24,6 +24,7 @@ from app.schemas.capture import (
     VendorData,
     QueryData,
     QueryResults,
+    DocumentQueryData,
     ConversationData,
     UnknownData,
     ResponseMode,
@@ -145,6 +146,52 @@ async def extract_from_text(
                 db=db,
             )
             query_results = QueryResults(**query_response)
+            needs_confirmation = False
+        elif intent == IntentType.DOCUMENT_QUERY:
+            from app.retrieval.rag_service import RAGService
+            rag = RAGService()
+            query_text = data.get("query", request.text)
+            vendor_filter = data.get("vendor_name")
+            logger.info(
+                "Document query: event=%s query=%r vendor_filter=%s",
+                event_id, query_text[:100], vendor_filter,
+            )
+            try:
+                rag_response = await rag.query(
+                    event_id=event_id,
+                    question=query_text,
+                    vendor_name=vendor_filter,
+                )
+                citations_dicts = [
+                    {
+                        "text": c.text,
+                        "document_name": c.document_name,
+                        "page_number": c.page_number,
+                        "section_title": c.section_title,
+                        "vendor_name": c.vendor_name,
+                        "score": c.score,
+                    }
+                    for c in rag_response.citations
+                ]
+                parsed_data = DocumentQueryData(
+                    query=query_text,
+                    vendor_name=vendor_filter,
+                    citations=citations_dicts,
+                )
+                assistant_message = rag_response.answer
+                response_mode = ResponseMode.ANSWER
+                logger.info(
+                    "Document query succeeded: %d citations, has_results=%s",
+                    len(citations_dicts), rag_response.has_results,
+                )
+            except Exception as e:
+                logger.error(
+                    "RAG query failed: event=%s query=%r error=%s",
+                    event_id, query_text[:100], str(e), exc_info=True,
+                )
+                parsed_data = DocumentQueryData(query=query_text)
+                assistant_message = "I wasn't able to search your documents right now. Please make sure you've uploaded the relevant files and try again."
+                response_mode = ResponseMode.ANSWER
             needs_confirmation = False
         elif intent == IntentType.CONVERSATION:
             parsed_data = ConversationData(**data) if data else ConversationData()

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class ExtractionResult(BaseModel):
     """Validated extraction result from LLM."""
     
-    intent: Literal["payment", "task", "calendar_event", "vendor", "sub_event_update", "event_update", "query", "conversation", "unknown"]
+    intent: Literal["payment", "task", "calendar_event", "vendor", "sub_event_update", "event_update", "query", "document_query", "conversation", "unknown"]
     action: Literal["create", "update", "delete"] = "create"
     confidence: float = Field(ge=0.0, le=1.0)
     data: dict = Field(default_factory=dict)
@@ -47,7 +47,7 @@ class LLMService:
     
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
     
-    EXTRACTION_PROMPT = """You are EventOps AI, a conversational event planning assistant. Understand user messages and extract structured data or respond conversationally.
+    EXTRACTION_PROMPT = """You are Eve, the virtual event planner for EventOps. Understand user messages and extract structured data or respond conversationally.
 
 Today: {today}
 {context}
@@ -87,13 +87,14 @@ RULES:
 18. TASK DELETION: To delete a task, set intent="task", action="delete", reference_id=TASK_ID from OPEN TASKS context.
 19. TASK LABELS vs TASK TITLES: A task "label" or "category" maps to vendor_category in the data schema. It is NOT the task title. "Label this as VENUE" = set vendor_category="venue" on the task (action="update"). "Create a task called Book Venue" = title="Book Venue" (action="create"). NEVER confuse label assignment with task creation.
 20. PAYMENT UPDATES (method, notes): When the user provides additional info about EXISTING payments (payment method, notes, who paid), use intent="payment", action="update" with items that match existing payments by vendor_name and amount_paid. Do NOT use action="create" — that would create duplicate records. Do NOT add secondary_actions to create or update the vendor — the system handles it.
+21. DOCUMENT QUERIES: When the user asks about contract terms, cancellation policies, payment schedules, venue rules, refund policies, liability, or any question that likely requires searching uploaded documents (contracts, quotes, invoices), use intent="document_query". Check UPLOADED DOCUMENTS in context to see what's available. Set data.query to the user's question, optionally data.vendor_name to filter by vendor, and data.document_type if specified (contract, quote, invoice). The system will search indexed documents and return an answer with citations. If no documents are uploaded, inform the user they need to upload the relevant document first.
 
 VENDOR CATEGORIES: venue, photography, videography, catering, florist, music_dj, decor, makeup_hair, mehndi, officiant, transportation, rentals, bakery, invitations, attire, jewelry, choreographer, planner, favors, travel, other
 Category keywords: photographer->photography, videographer/cinematographer->videography, DJ/band/dhol/anchor->music_dj, caterer/halwai->catering, mehndi/henna artist->mehndi, pandit/priest/pujari/pastor->officiant, decorator/lighting->decor, makeup/MUA/hair->makeup_hair, lehenga/sherwani/tailor->attire, jeweler->jewelry, cake/mithai->bakery, car rental/limo/doli/ghodi->transportation, tent/shamiyana->rentals, wedding planner/coordinator->planner, choreographer->choreographer, invitation cards->invitations, favors/return gifts->favors, honeymoon/travel->travel
 
 Return ONLY valid JSON:
 {{
-  "intent": "payment|task|calendar_event|vendor|sub_event_update|event_update|query|conversation|unknown",
+  "intent": "payment|task|calendar_event|vendor|sub_event_update|event_update|query|document_query|conversation|unknown",
   "action": "create|update|delete",
   "confidence": 0.0-1.0,
   "data": {{}},
@@ -117,13 +118,14 @@ VENDOR: name(req), category, contact_info, notes. For updates: use action="updat
 SUB_EVENT_UPDATE: action(add|update|cancel|reschedule), sub_event_name, new_name, new_date(YYYY-MM-DD), new_start_time(HH:MM), new_end_time(HH:MM), new_location, description
 EVENT_UPDATE: name, event_date, start_date, end_date, location, location_city, description
 QUERY: query_type(list|aggregate|search|status), target(payments|tasks|vendors|calendar_events|all), filters{{}}, sort_by, sort_order, limit
+DOCUMENT_QUERY: query(req — the user's question to search documents for), vendor_name(optional — filter by vendor), document_type(optional: contract|quote|invoice)
 CONVERSATION: topic, answer, related_record_id
 
 Confidence: >0.9=clear+complete, 0.6-0.9=clear+missing fields, <0.6=unclear. Set needs_confirmation=true unless confidence>0.95.
 Ask ONE follow-up question at a time for critical missing info. ALWAYS name the exact missing field in your assistant_message. Bad: "I need more details." Good: "What's the business name of the decorator?" Keep it short and conversational.
 No explanations outside JSON."""
 
-    PLANNING_PROMPT = """You are an AI planning assistant for EventOps, an event planning platform.
+    PLANNING_PROMPT = """You are Eve, the virtual event planner for EventOps.
 
 Today's date is: {today}
 

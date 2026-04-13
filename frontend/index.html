@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EventOps AI</title>
   <link rel="stylesheet" href="/static/css/branding.css">
-  <link rel="stylesheet" href="/static/css/glassmorphism.css?v=8">
+  <link rel="stylesheet" href="/static/css/glassmorphism.css?v=31">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -49,6 +49,10 @@
           <i class="fas fa-dollar-sign"></i>
           <span class="nav-text">PAYMENTS</span>
         </button>
+        <button class="nav-btn" data-view="notes">
+          <i class="fas fa-sticky-note"></i>
+          <span class="nav-text">NOTES</span>
+        </button>
         <button class="nav-btn" data-view="files">
           <i class="fas fa-folder-open"></i>
           <span class="nav-text">FILES</span>
@@ -68,7 +72,7 @@
                 <img src="/static/images/logo-white.png" alt="EventOps" class="welcome-logo-img">
               </div>
               <h1>Welcome to EventOps</h1>
-              <p>Your AI-powered event planning assistant. Create your first event to get started.</p>
+              <p>Meet Eve, your virtual event planner. Create your first event to get started.</p>
               <button class="btn-welcome" onclick="showCreateEventModal()">
                 <i class="fas fa-plus"></i> Create Your First Event
               </button>
@@ -94,6 +98,18 @@
               <div class="stat-item-subtle">
                 <span class="stat-number" id="stat-pending">$0</span>
                 <span class="stat-label-subtle">INCOMING PAYMENTS</span>
+              </div>
+            </div>
+
+            <!-- Budget Tracker -->
+            <div class="budget-tracker" id="budgetTracker" style="display:none;">
+              <div class="budget-progress-bar">
+                <div class="budget-fill-paid" id="budgetFillPaid"></div>
+                <div class="budget-fill-pending" id="budgetFillPending"></div>
+              </div>
+              <div class="budget-progress-labels">
+                <span id="budgetLabelSpent"></span>
+                <span id="budgetLabelRemaining"></span>
               </div>
             </div>
 
@@ -129,6 +145,18 @@
       <!-- Payments View (with Vendors) -->
       <div id="view-payments" class="view-content hidden">
         <div class="main-content-v2">
+          <div class="spend-donut-section" id="spendDonutSection" style="display:none;">
+            <div class="spend-donut-wrap">
+              <svg id="spendDonutSvg" viewBox="0 0 260 160" class="spend-donut-svg">
+                <g id="spendDonutSlices"></g>
+              </svg>
+              <div class="spend-donut-center">
+                <span class="spend-donut-amount" id="spendDonutAmount">$0</span>
+                <span class="spend-donut-label">TOTAL SPEND</span>
+              </div>
+            </div>
+            <div class="spend-donut-legend" id="spendDonutLegend"></div>
+          </div>
           <div class="two-column-layout">
             <!-- Left: Booked Vendors -->
             <div class="column-half">
@@ -160,39 +188,130 @@
         </div>
       </div>
 
-      <!-- Calendar View (with Events/Sub-Events) -->
+      <!-- Calendar View (Full Grid) -->
       <div id="view-calendar" class="view-content hidden">
         <div class="main-content-v2">
-          <!-- Event Details Section -->
-          <div class="event-details-card" id="eventDetailsCard">
-            <div class="event-details-header">
-              <h2 class="event-details-name" id="eventDetailsName">Event Name</h2>
-              <div class="event-details-meta">
-                <span id="eventDetailsDate"><i class="fas fa-calendar"></i> Date</span>
-                <span id="eventDetailsLocation"><i class="fas fa-map-marker-alt"></i> Location</span>
+          <!-- Calendar Header with month nav -->
+          <div class="cal-grid-header">
+            <button class="cal-nav-btn" id="calPrevMonth" title="Previous month">
+              <i class="fas fa-chevron-left"></i>
+            </button>
+            <h2 class="cal-month-title" id="calMonthTitle">June 2026</h2>
+            <button class="cal-nav-btn" id="calNextMonth" title="Next month">
+              <i class="fas fa-chevron-right"></i>
+            </button>
+            <button class="cal-today-btn" id="calTodayBtn">Today</button>
+            <button class="cal-today-btn cal-wedding-btn" id="calWeddingBtn" style="display:none;">Wedding</button>
+            <div class="cal-legend">
+              <div class="cal-legend-item">
+                <span class="cal-legend-dot dot-task"></span> Tasks
+              </div>
+              <div class="cal-legend-item">
+                <span class="cal-legend-dot dot-event"></span> Events
+              </div>
+              <div class="cal-legend-item">
+                <span class="cal-legend-dot dot-payment"></span> Payments
               </div>
             </div>
           </div>
 
-          <div class="two-column-layout">
-            <!-- Left: Sub-Events -->
-            <div class="column-half">
-              <h2 class="column-title">Sub-Events</h2>
-              <div class="subevent-list-v2" id="calendarSubEventsList">
-                <div class="empty-state-v2">
-                  <p>No sub-events yet</p>
-                </div>
+          <!-- Day-of-week labels -->
+          <div class="cal-grid-weekdays">
+            <div class="cal-weekday">Sun</div>
+            <div class="cal-weekday">Mon</div>
+            <div class="cal-weekday">Tue</div>
+            <div class="cal-weekday">Wed</div>
+            <div class="cal-weekday">Thu</div>
+            <div class="cal-weekday">Fri</div>
+            <div class="cal-weekday">Sat</div>
+          </div>
+
+          <!-- Calendar grid cells -->
+          <div class="cal-grid" id="calGrid"></div>
+        </div>
+      </div>
+
+      <!-- Notes View -->
+      <div id="view-notes" class="view-content hidden">
+        <div class="notes-view">
+          <!-- Left Sidebar -->
+          <aside class="notes-sidebar" id="notesSidebar">
+            <div class="notes-sidebar-header">
+              <span class="notes-sidebar-title">Notes</span>
+              <button class="btn btn-ghost btn-sm notes-collapse-btn" onclick="toggleNotesSidebar()" title="Collapse sidebar">
+                <i class="fas fa-chevron-left" id="notesSidebarToggleIcon"></i>
+              </button>
+            </div>
+            <div class="notes-sidebar-actions">
+              <button class="notes-new-btn" onclick="createNewNote()">
+                <i class="fas fa-plus"></i> New Note
+              </button>
+            </div>
+            <div class="notes-search-wrap">
+              <i class="fas fa-search notes-search-icon"></i>
+              <input type="text" class="notes-search-input" id="notesSearchInput" placeholder="Search notes..." oninput="filterNotesList()">
+            </div>
+            <div class="notes-list" id="notesList"></div>
+          </aside>
+
+          <!-- Main Editor Area -->
+          <div class="notes-editor-area no-note" id="notesEditorArea">
+            <!-- Expand sidebar button (visible only when sidebar collapsed) -->
+            <button class="notes-sidebar-expand-btn" id="notesSidebarExpandBtn" onclick="toggleNotesSidebar()" title="Show sidebar" style="display:none;">
+              <i class="fas fa-bars"></i>
+            </button>
+
+            <!-- Top bar: title + timestamp + actions -->
+            <div class="notes-top-bar">
+              <input type="text" class="notes-title-input" id="noteTitleInput" placeholder="Untitled Note" maxlength="255">
+              <div class="notes-top-bar-right">
+                <span class="notes-save-status" id="notesSaveStatus"></span>
+                <span class="notes-updated-at" id="noteUpdatedAt"></span>
+                <button class="notes-fmt-btn" onclick="downloadCurrentNote()" title="Download as .txt">
+                  <i class="fas fa-download"></i>
+                </button>
+                <button class="notes-fmt-btn notes-delete-btn" onclick="deleteCurrentNote()" title="Delete note">
+                  <i class="fas fa-trash-alt"></i>
+                </button>
               </div>
             </div>
 
-            <!-- Right: Calendar Events -->
-            <div class="column-half">
-              <h2 class="column-title">Scheduled Events</h2>
-              <div class="calendar-list-v2" id="calendarList">
-                <div class="empty-state-v2">
-                  <p>No calendar events yet</p>
-                </div>
+            <!-- Formatting Toolbar -->
+            <div class="notes-toolbar" id="notesToolbar">
+              <div class="notes-toolbar-group">
+                <select class="notes-block-select" id="notesBlockFormat" onchange="applyBlockFormat(this.value)" title="Text style">
+                  <option value="p">Body</option>
+                  <option value="h1">Title</option>
+                  <option value="h2">Heading</option>
+                  <option value="h3">Subheading</option>
+                </select>
               </div>
+              <div class="notes-toolbar-divider"></div>
+              <div class="notes-toolbar-group">
+                <button class="notes-fmt-btn" onclick="execFmt('bold')" title="Bold (Ctrl+B)"><i class="fas fa-bold"></i></button>
+                <button class="notes-fmt-btn" onclick="execFmt('italic')" title="Italic (Ctrl+I)"><i class="fas fa-italic"></i></button>
+                <button class="notes-fmt-btn" onclick="execFmt('underline')" title="Underline (Ctrl+U)"><i class="fas fa-underline"></i></button>
+                <button class="notes-fmt-btn" onclick="execFmt('strikethrough')" title="Strikethrough"><i class="fas fa-strikethrough"></i></button>
+              </div>
+              <div class="notes-toolbar-divider"></div>
+              <div class="notes-toolbar-group">
+                <button class="notes-fmt-btn" onclick="execFmt('insertUnorderedList')" title="Bullet list"><i class="fas fa-list-ul"></i></button>
+                <button class="notes-fmt-btn" onclick="execFmt('insertOrderedList')" title="Numbered list"><i class="fas fa-list-ol"></i></button>
+              </div>
+              <span class="notes-word-count" id="notesWordCount"></span>
+            </div>
+
+            <!-- Editable content area -->
+            <div class="notes-editor" id="notesEditor" contenteditable="true" data-placeholder="Start writing..."></div>
+
+            <!-- Empty state when no note selected -->
+            <div class="notes-empty-state" id="notesEmptyState">
+              <div class="notes-empty-icon"><i class="fas fa-pen-fancy"></i></div>
+              <h3 class="notes-empty-title">Your notes, your way</h3>
+              <p class="notes-empty-desc">Capture ideas, meeting notes, and details for your event.</p>
+              <button class="notes-empty-cta" onclick="createNewNote()">
+                <i class="fas fa-plus"></i> Create your first note
+              </button>
             </div>
           </div>
         </div>
@@ -252,7 +371,8 @@
       <div class="chat-header">
         <div class="chat-title">
           <i class="fas fa-sparkles"></i>
-          AI Assistant
+          Ask Eve
+          <span class="chat-subtitle">virtual event planner</span>
         </div>
         <span class="fullscreen-hint">Click to minimize</span>
         <span class="chat-badge">Beta</span>
@@ -261,7 +381,7 @@
       <div class="chat-body">
         <div class="chat-messages" id="captureMessages">
           <div class="message message-ai">
-            Tell me about payments, tasks, or events in plain English. I'll help you track everything!
+            Hey! I'm Eve, your virtual event planner. Tell me about payments, tasks, or events and I'll help you track everything!
           </div>
         </div>
       </div>
@@ -628,42 +748,118 @@
     </div>
   </div>
 
-  <!-- Calendar Event Detail Popup -->
-  <div class="modal-overlay" id="calendarDetailModal">
-    <div class="modal calendar-detail-modal">
+  <!-- Calendar Event Create / Edit Modal -->
+  <div class="modal-overlay" id="calEventModal">
+    <div class="modal cal-event-modal">
       <div class="modal-header">
-        <h2 id="calDetailTitle">Event Details</h2>
-        <button class="btn btn-ghost btn-sm" onclick="closeCalendarDetail()">
+        <h2 id="calEventModalTitle">New Event</h2>
+        <button class="btn btn-ghost btn-sm" onclick="closeCalEventModal()">
           <i class="fas fa-times"></i>
         </button>
       </div>
-      <div class="calendar-detail-body">
-        <div class="calendar-detail-columns">
-          <div class="calendar-detail-sidebar">
-            <div class="task-detail-section">
-              <span class="task-detail-label">Date</span>
-              <span class="task-detail-value" id="calDetailDate"></span>
+      <form id="calEventForm" onsubmit="saveCalEvent(event)">
+        <div class="cal-event-form-body">
+          <div class="input-group">
+            <label for="calEvtTitle">Event Name</label>
+            <input type="text" class="input" id="calEvtTitle" placeholder="e.g., Bachelor Trip" required>
+          </div>
+
+          <div class="input-row">
+            <div class="input-group flex-1">
+              <label for="calEvtStartDate">Start Date</label>
+              <input type="date" class="input" id="calEvtStartDate" required>
             </div>
-            <div class="task-detail-section">
-              <span class="task-detail-label">Time</span>
-              <span class="task-detail-value" id="calDetailTime"></span>
-            </div>
-            <div class="task-detail-section">
-              <span class="task-detail-label">Location</span>
-              <span class="task-detail-value" id="calDetailLocation"></span>
+            <div class="input-group flex-1">
+              <label for="calEvtEndDate">End Date <span class="text-muted">(optional)</span></label>
+              <input type="date" class="input" id="calEvtEndDate">
             </div>
           </div>
-          <div class="calendar-detail-main">
-            <div class="task-detail-section task-detail-section-grow">
-              <span class="task-detail-label">Notes</span>
-              <div class="task-detail-description" id="calDetailNotes" contenteditable="true"></div>
+
+          <div class="input-row cal-time-row">
+            <div class="input-group flex-1">
+              <label for="calEvtTime">Time</label>
+              <input type="time" class="input" id="calEvtTime" disabled>
             </div>
+            <div class="input-group cal-allday-group">
+              <label class="cal-allday-label">
+                <input type="checkbox" id="calEvtAllDay" checked> All Day
+              </label>
+            </div>
+          </div>
+
+          <div class="input-group">
+            <label for="calEvtNotes">Notes</label>
+            <textarea class="input cal-evt-notes" id="calEvtNotes" rows="4" placeholder="Add details about this event..."></textarea>
           </div>
         </div>
-      </div>
+
+        <div class="cal-event-form-actions">
+          <button type="button" class="btn btn-danger btn-sm" id="calEvtDeleteBtn" onclick="deleteCalEvent()" style="display:none;">
+            <i class="fas fa-trash"></i> Delete
+          </button>
+          <div class="cal-event-form-right">
+            <button type="button" class="btn btn-secondary" onclick="closeCalEventModal()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </div>
+      </form>
     </div>
   </div>
 
-  <script src="/static/js/app.js?v=8"></script>
+  <!-- Calendar Payment Detail / Edit Modal -->
+  <div class="modal-overlay" id="calPaymentModal">
+    <div class="modal cal-event-modal">
+      <div class="modal-header">
+        <h2 id="calPaymentModalTitle">Payment Details</h2>
+        <button class="btn btn-ghost btn-sm" onclick="closeCalPaymentModal()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <form id="calPaymentForm" onsubmit="saveCalPayment(event)">
+        <div class="cal-event-form-body">
+          <div class="input-group">
+            <label for="calPmtVendor">Vendor</label>
+            <input type="text" class="input" id="calPmtVendor" placeholder="Vendor name" readonly>
+          </div>
+
+          <div class="input-row">
+            <div class="input-group flex-1">
+              <label for="calPmtAmount">Amount</label>
+              <input type="number" class="input" id="calPmtAmount" step="0.01" min="0" required>
+            </div>
+            <div class="input-group flex-1">
+              <label for="calPmtMethod">Method</label>
+              <input type="text" class="input" id="calPmtMethod" placeholder="e.g., Credit Card">
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="input-group flex-1">
+              <label for="calPmtPaidDate">Paid Date</label>
+              <input type="date" class="input" id="calPmtPaidDate" required>
+            </div>
+            <div class="input-group flex-1">
+              <label for="calPmtDueDate">Due Date <span class="text-muted">(optional)</span></label>
+              <input type="date" class="input" id="calPmtDueDate">
+            </div>
+          </div>
+
+          <div class="input-group">
+            <label for="calPmtNotes">Notes</label>
+            <textarea class="input cal-evt-notes" id="calPmtNotes" rows="3" placeholder="Payment notes..."></textarea>
+          </div>
+        </div>
+
+        <div class="cal-event-form-actions">
+          <div class="cal-event-form-right">
+            <button type="button" class="btn btn-secondary" onclick="closeCalPaymentModal()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js?v=30"></script>
 </body>
 </html>

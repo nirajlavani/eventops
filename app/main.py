@@ -1,3 +1,5 @@
+import logging
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -7,6 +9,19 @@ from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stderr,
+    force=True,
+)
+logging.getLogger("app").setLevel(logging.DEBUG)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("chromadb").setLevel(logging.WARNING)
+logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
 
 
 class NoCacheStaticMiddleware(BaseHTTPMiddleware):
@@ -18,7 +33,7 @@ class NoCacheStaticMiddleware(BaseHTTPMiddleware):
 
 from app.database import init_db
 from app.config import get_settings
-from app.routers import events, vendors, payments, tasks, calendar, capture, dashboard, planning, sub_events, feedback, attachments
+from app.routers import events, vendors, payments, tasks, calendar, capture, dashboard, planning, sub_events, feedback, attachments, notes
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
@@ -33,8 +48,8 @@ async def lifespan(app: FastAPI):
 settings = get_settings()
 
 app = FastAPI(
-    title="EventOps AI",
-    description="AI-powered event operations platform",
+    title="EventOps",
+    description="Eve — your virtual event planner",
     version="1.0.0",
     lifespan=lifespan,
     debug=settings.debug,
@@ -53,6 +68,7 @@ app.include_router(dashboard.router, prefix="/api/events/{event_id}/dashboard", 
 app.include_router(planning.router, prefix="/api/events/{event_id}/planning", tags=["Planning"])
 app.include_router(attachments.router, prefix="/api/events/{event_id}/attachments", tags=["Attachments"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
+app.include_router(notes.router, prefix="/api/events/{event_id}/notes", tags=["Notes"])
 
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR / "static"), name="static")

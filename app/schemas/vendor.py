@@ -11,6 +11,8 @@ class VendorBase(BaseModel):
     category: Optional[str] = None
     contact_info: Optional[str] = None
     notes: Optional[str] = None
+    icon_class: Optional[str] = None
+    icon_color: Optional[str] = None
 
 
 class VendorCreate(VendorBase):
@@ -25,6 +27,8 @@ class VendorUpdate(BaseModel):
     category: Optional[str] = None
     contact_info: Optional[str] = None
     notes: Optional[str] = None
+    icon_class: Optional[str] = None
+    icon_color: Optional[str] = None
 
 
 class VendorResponse(VendorBase):

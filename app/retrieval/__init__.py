@@ -1,1 +1,1 @@
-# Retrieval module placeholder for Phase 2 vector database integration
+# Retrieval module — RAG pipeline for document search and citation

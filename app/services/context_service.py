@@ -15,6 +15,7 @@ from app.models.payment import Payment
 from app.models.task import Task
 from app.models.calendar_event import CalendarEvent
 from app.models.sub_event import SubEvent
+from app.models.attachment import Attachment
 
 
 class ContextService:
@@ -271,7 +272,25 @@ class ContextService:
                 "end_time": se.end_time.isoformat() if se.end_time else None,
                 "location": se.location,
             })
-        
+
+        # Get uploaded documents (attachments)
+        attachments_result = await db.execute(
+            select(Attachment)
+            .where(Attachment.event_id == event_id)
+            .order_by(Attachment.created_at.desc())
+        )
+        attachments = attachments_result.scalars().all()
+        context["documents"] = []
+        for a in attachments:
+            vendor_name = vendor_map.get(a.vendor_id) if a.vendor_id else None
+            context["documents"].append({
+                "id": a.id,
+                "filename": a.original_filename,
+                "category": a.category,
+                "vendor_name": vendor_name,
+                "content_type": a.content_type,
+            })
+
         return context
     
     def format_full_context_for_prompt(self, context: dict) -> str:
@@ -358,6 +377,17 @@ class ContextService:
         else:
             lines.append("\nSUB-EVENTS: None scheduled")
         
+        # Uploaded documents section
+        documents = context.get("documents", [])
+        if documents:
+            lines.append(f"\nUPLOADED DOCUMENTS ({len(documents)}):")
+            for d in documents[:15]:
+                vendor_str = f" | vendor: {d['vendor_name']}" if d.get("vendor_name") else ""
+                cat_str = f" | category: {d['category']}" if d.get("category") else ""
+                lines.append(f"  - DOC_ID={d['id']} | {d['filename']}{vendor_str}{cat_str}")
+        else:
+            lines.append("\nUPLOADED DOCUMENTS: None uploaded yet")
+
         lines.append("\n=== END OF DATA ===")
         
         return "\n".join(lines)

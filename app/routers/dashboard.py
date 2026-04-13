@@ -19,6 +19,8 @@ from app.schemas.dashboard import (
     UpcomingCalendarEvent,
     VendorSummary,
     FinancialSummary,
+    BudgetBreakdown,
+    CategorySpend,
 )
 
 router = APIRouter()
@@ -164,7 +166,43 @@ async def get_dashboard(
         total_upcoming=total_upcoming,
         by_vendor=by_vendor,
     )
-    
+
+    vendor_category_map = {v.id: (v.category or "other") for v in vendors}
+    category_spend: dict[str, dict[str, Decimal]] = defaultdict(
+        lambda: {"paid": Decimal("0"), "pending": Decimal("0")}
+    )
+    for p in all_payments:
+        cat = vendor_category_map.get(p.vendor_id, "other")
+        if p.paid_date:
+            category_spend[cat]["paid"] += p.amount
+        else:
+            category_spend[cat]["pending"] += p.amount
+
+    by_category = [
+        CategorySpend(
+            category=cat,
+            paid=data["paid"],
+            pending=data["pending"],
+            total=data["paid"] + data["pending"],
+        )
+        for cat, data in sorted(category_spend.items(), key=lambda x: x[1]["paid"] + x[1]["pending"], reverse=True)
+    ]
+
+    total_committed = total_paid + total_upcoming
+    budget_cap = event.budget_cap
+    remaining = (budget_cap - total_committed) if budget_cap else None
+    percent_used = float(total_committed / budget_cap * 100) if budget_cap and budget_cap > 0 else None
+
+    budget_breakdown = BudgetBreakdown(
+        total_spent=total_paid,
+        total_pending=total_upcoming,
+        total_committed=total_committed,
+        budget_cap=budget_cap,
+        remaining=remaining,
+        percent_used=round(percent_used, 1) if percent_used is not None else None,
+        by_category=by_category,
+    )
+
     return DashboardResponse(
         event_id=event_id,
         event_name=event.name,
@@ -173,4 +211,5 @@ async def get_dashboard(
         upcoming_events=upcoming_events,
         vendor_summary=vendor_summary,
         financial_summary=financial_summary,
+        budget_breakdown=budget_breakdown,
     )

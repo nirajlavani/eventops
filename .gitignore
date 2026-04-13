@@ -39,6 +39,12 @@ eventops_venv/
 # Uploads
 uploads/
 
+# Vector DB
+chroma_db/
+
+# Local notes
+local/notes/
+
 # IDE
 .idea/
 .vscode/

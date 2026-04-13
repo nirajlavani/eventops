@@ -1,4 +1,5 @@
 from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Optional, List, TYPE_CHECKING, Union, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
@@ -18,6 +19,7 @@ class EventBase(BaseModel):
     location: Optional[str] = None
     location_city: Optional[str] = None
     description: Optional[str] = None
+    budget_cap: Optional[Decimal] = None
 
 
 class SubEventCreateInline(BaseModel):
@@ -49,6 +51,7 @@ class EventUpdate(BaseModel):
     location: Optional[str] = None
     location_city: Optional[str] = None
     description: Optional[str] = None
+    budget_cap: Optional[Decimal] = None
 
 
 class SubEventResponseInline(BaseModel):

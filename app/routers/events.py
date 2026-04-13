@@ -117,8 +117,13 @@ async def update_event(
         setattr(event, field, value)
     
     await db.commit()
-    await db.refresh(event)
-    return event
+
+    refreshed = await db.execute(
+        select(Event)
+        .options(selectinload(Event.sub_events))
+        .where(Event.id == event_id)
+    )
+    return refreshed.scalar_one()
 
 
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)

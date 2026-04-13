@@ -5,6 +5,25 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 
+class CategorySpend(BaseModel):
+    """Spend breakdown for a single vendor category."""
+    category: str
+    paid: Decimal
+    pending: Decimal
+    total: Decimal
+
+
+class BudgetBreakdown(BaseModel):
+    """Budget tracker with category-level spend analysis."""
+    total_spent: Decimal
+    total_pending: Decimal
+    total_committed: Decimal
+    budget_cap: Optional[Decimal] = None
+    remaining: Optional[Decimal] = None
+    percent_used: Optional[float] = None
+    by_category: List[CategorySpend]
+
+
 class UpcomingPayment(BaseModel):
     """Upcoming payment summary."""
     
@@ -60,3 +79,4 @@ class DashboardResponse(BaseModel):
     upcoming_events: List[UpcomingCalendarEvent]
     vendor_summary: VendorSummary
     financial_summary: FinancialSummary
+    budget_breakdown: Optional[BudgetBreakdown] = None

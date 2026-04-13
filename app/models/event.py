@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime, date
+from decimal import Decimal
 from typing import Optional, List, TYPE_CHECKING
 
-from sqlalchemy import String, Text, Date
+from sqlalchemy import String, Text, Date, Numeric
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -35,6 +36,7 @@ class Event(Base):
     location: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     location_city: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    budget_cap: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         default=datetime.utcnow,

@@ -32,6 +32,8 @@ class Vendor(Base):
     category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     contact_info: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    icon_class: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    icon_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         default=datetime.utcnow,

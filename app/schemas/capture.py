@@ -15,6 +15,7 @@ class IntentType(str, Enum):
     SUB_EVENT_UPDATE = "sub_event_update"
     EVENT_UPDATE = "event_update"
     QUERY = "query"
+    DOCUMENT_QUERY = "document_query"
     CONVERSATION = "conversation"
     UNKNOWN = "unknown"
 
@@ -139,6 +140,27 @@ class QueryResults(BaseModel):
     natural_response: str
 
 
+class DocumentQueryData(BaseModel):
+    """Extracted document query data for RAG search."""
+
+    model_config = {"extra": "allow"}
+
+    query: Optional[str] = None
+    vendor_name: Optional[str] = None
+    document_type: Optional[str] = None
+    citations: Optional[list[dict]] = None
+
+
+class CitationData(BaseModel):
+    """A single citation from a document search result."""
+    text: str
+    document_name: str
+    page_number: int
+    section_title: str
+    vendor_name: Optional[str] = None
+    score: float = 0.0
+
+
 class ConversationData(BaseModel):
     """Data for conversational responses."""
     
@@ -181,7 +203,7 @@ class CaptureResponse(BaseModel):
     intent: IntentType
     action: ActionType = ActionType.CREATE
     confidence: float = Field(..., ge=0.0, le=1.0)
-    data: Union[PaymentData, TaskData, CalendarEventData, VendorData, SubEventUpdateData, EventUpdateData, QueryData, ConversationData, UnknownData, dict]
+    data: Union[PaymentData, TaskData, CalendarEventData, VendorData, SubEventUpdateData, EventUpdateData, QueryData, DocumentQueryData, ConversationData, UnknownData, dict]
     missing_fields: list[str] = Field(default_factory=list)
     needs_confirmation: bool = True
     reference_id: Optional[str] = None

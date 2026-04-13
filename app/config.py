@@ -6,12 +6,14 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
     openrouter_api_key: str = ""
+    openai_api_key: str = ""
     llm_model: str = "minimax/minimax-m2.5"
     database_url: str = "sqlite+aiosqlite:///./eventops.db"
     environment: str = "development"
     debug: bool = True
     upload_dir: str = "uploads"
     max_upload_size_mb: int = 25
+    chroma_persist_dir: str = "chroma_db"
     
     model_config = {
         "env_file": ".env",

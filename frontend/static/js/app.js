@@ -1,4 +1,4 @@
-// EventOps AI - GenZ Warm Theme
+// EventOps — Eve, your virtual event planner
 
 // Global error handler to catch any JS errors
 window.onerror = function(message, source, lineno, colno, error) {
@@ -30,7 +30,7 @@ const COLLAPSED_PROMPTS = [
   "Share an update below",
   "Any updates on your wedding planning?",
   "What did you knock off today?",
-  "Hi! How can I help you?",
+  "Hi, I'm Eve! How can I help?",
   "What's on your mind today?"
 ];
 
@@ -343,6 +343,7 @@ function refreshCurrentView() {
     case 'payments': loadPaymentsV2(); break;
     case 'tasks': break;
     case 'calendar': loadCalendarV2(); break;
+    case 'notes': loadNotesView(); break;
     case 'files': loadFilesV2(); break;
   }
 }
@@ -405,6 +406,10 @@ async function loadEvents() {
         if (selected) {
           currentEventId = selected.id;
           currentEventType = selected.event_type;
+          calViewYear = null;
+          calViewMonth = null;
+          currentNoteId = null;
+          notesList = [];
           updateEventTitle();
           refreshCurrentView();
           updateEditButtonVisibility();
@@ -711,6 +716,10 @@ function formatTime(timeStr) {
 function selectEvent(eventId, eventType) {
   currentEventId = eventId;
   currentEventType = eventType;
+  calViewYear = null;
+  calViewMonth = null;
+  currentNoteId = null;
+  notesList = [];
   document.getElementById('eventSelector').value = eventId;
   switchView('dashboard');
 }
@@ -746,18 +755,21 @@ async function loadVendors() {
       return;
     }
     
-    container.innerHTML = vendors.map((v, i) => `
+    container.innerHTML = vendors.map((v, i) => {
+      const ic = v.icon_class || getVendorIcon(v.category);
+      const bg = v.icon_color || getVendorColor(v.category);
+      return `
       <div class="item-row">
-        <div class="avatar avatar-${COLORS[i % COLORS.length]}">
-          <i class="${getVendorIcon(v.category)}"></i>
+        <div class="avatar" style="background:${bg}; color:#fff;">
+          <i class="${ic}"></i>
         </div>
         <div class="item-content">
           <div class="item-title">${escapeHtml(v.name)}</div>
           <div class="item-subtitle">${escapeHtml(v.category || 'Other')}</div>
         </div>
         ${v.contact_info ? `<span class="item-subtitle">${escapeHtml(v.contact_info)}</span>` : ''}
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
   } catch (error) {
     console.error('Failed to load vendors:', error);
   }
@@ -982,6 +994,14 @@ async function submitCapture() {
       return;
     }
     
+    // Handle document query with structured citations
+    if (result.intent === 'document_query' && result.data?.citations?.length) {
+      const html = formatDocumentAnswer(result.assistant_message || '', result.data.citations);
+      addMessage(html, 'ai', true);
+      addToConversationHistory('assistant', result.assistant_message || '');
+      return;
+    }
+
     // Handle answer response mode (queries)
     if (responseMode === 'answer' || result.intent === 'query') {
       const msg = result.assistant_message || result.query_results?.natural_response || "Here's what I found.";
@@ -1937,19 +1957,161 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function formatDocumentAnswer(rawAnswer, citations) {
+  const uniqueCitations = [];
+  const seen = new Set();
+  for (const c of citations) {
+    const key = `${c.section_title}|${c.page_number}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueCitations.push(c);
+    }
+  }
+
+  let html = escapeHtml(rawAnswer);
+
+  html = html.replace(/\[(\d+)\]/g, (_, num) => {
+    const idx = parseInt(num, 10);
+    if (idx >= 1 && idx <= uniqueCitations.length) {
+      const c = uniqueCitations[idx - 1];
+      const tip = escapeHtml(`${c.section_title}, p.${c.page_number}`);
+      return `<span class="cite-pill" title="${tip}">${idx}</span>`;
+    }
+    return `[${num}]`;
+  });
+
+  html = html.replace(/^&gt;\s?(.+)$/gm, '<blockquote class="doc-quote">$1</blockquote>');
+  html = html.replace(/<\/blockquote>\n<blockquote class="doc-quote">/g, '\n');
+
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+  html = html.replace(/^[-•]\s+(.+)$/gm, '<li>$1</li>');
+  html = html.replace(/((?:<li>.*<\/li>\s*)+)/g, '<ul class="doc-answer-list">$1</ul>');
+
+  html = html.replace(/\n{2,}/g, '</p><p>');
+  html = html.replace(/\n/g, '<br>');
+  html = `<p>${html}</p>`;
+
+  let sourcesHtml = '';
+  if (uniqueCitations.length > 0) {
+    const items = uniqueCitations.map((c, i) => {
+      const label = escapeHtml(c.section_title || 'Document');
+      const page = c.page_number || '?';
+      return `<span class="source-ref"><span class="cite-pill cite-pill-sm">${i + 1}</span> ${label}, p.${page}</span>`;
+    }).join('');
+    sourcesHtml = `<div class="doc-sources"><span class="doc-sources-label">Sources</span><div class="doc-sources-list">${items}</div></div>`;
+  }
+
+  return `<div class="doc-answer">${html}${sourcesHtml}</div>`;
+}
+
 function getPriorityTagClass(priority) {
   return { high: 'tag-danger', medium: 'tag-warning', low: 'tag-success' }[priority] || 'tag-default';
 }
 
+const VENDOR_ICON_MAP = {
+  photography:    'fas fa-camera',
+  videography:    'fas fa-video',
+  music_dj:       'fas fa-compact-disc',
+  catering:       'fas fa-utensils',
+  mehndi:         'fas fa-hand-sparkles',
+  officiant:      'fas fa-book-open',
+  decor:          'fas fa-wreath',
+  makeup_hair:    'fas fa-paint-brush',
+  attire:         'fas fa-shirt',
+  jewelry:        'fas fa-gem',
+  bakery:         'fas fa-cake-candles',
+  transportation: 'fas fa-car-side',
+  rentals:        'fas fa-tent',
+  planner:        'fas fa-clipboard-list',
+  choreographer:  'fas fa-person-walking',
+  invitations:    'fas fa-envelope-open-text',
+  favors:         'fas fa-gift',
+  travel:         'fas fa-plane-departure',
+  venue:          'fas fa-building-columns',
+  florist:        'fas fa-seedling',
+  photographer:   'fas fa-camera',
+  caterer:        'fas fa-utensils',
+  decorator:      'fas fa-palette',
+  dj:             'fas fa-compact-disc',
+};
+
+const VENDOR_COLOR_MAP = {
+  photography:    '#A0C9CB',
+  videography:    '#A0C9CB',
+  music_dj:       '#FF6037',
+  catering:       '#CB997E',
+  mehndi:         '#D4A373',
+  officiant:      '#87A878',
+  decor:          '#FFBF69',
+  makeup_hair:    '#E8A0BF',
+  attire:         '#B4A7D6',
+  jewelry:        '#F0C27F',
+  bakery:         '#F4845F',
+  transportation: '#7FCDCD',
+  rentals:        '#C4A35A',
+  planner:        '#A0C9CB',
+  choreographer:  '#FF9F1C',
+  invitations:    '#D4A5A5',
+  favors:         '#87A878',
+  travel:         '#7EB0D5',
+  venue:          '#733635',
+  florist:        '#87A878',
+  photographer:   '#A0C9CB',
+  caterer:        '#CB997E',
+  decorator:      '#FFBF69',
+  dj:             '#FF6037',
+};
+
+const VENDOR_ICON_INVENTORY = [
+  { icon: 'fas fa-camera',             label: 'Camera' },
+  { icon: 'fas fa-video',              label: 'Video' },
+  { icon: 'fas fa-compact-disc',       label: 'Disc' },
+  { icon: 'fas fa-music',              label: 'Music' },
+  { icon: 'fas fa-utensils',           label: 'Utensils' },
+  { icon: 'fas fa-hand-sparkles',      label: 'Mehndi' },
+  { icon: 'fas fa-book-open',          label: 'Book' },
+  { icon: 'fas fa-wreath',             label: 'Wreath' },
+  { icon: 'fas fa-palette',            label: 'Palette' },
+  { icon: 'fas fa-paint-brush',        label: 'Brush' },
+  { icon: 'fas fa-shirt',              label: 'Attire' },
+  { icon: 'fas fa-gem',                label: 'Gem' },
+  { icon: 'fas fa-cake-candles',       label: 'Cake' },
+  { icon: 'fas fa-car-side',           label: 'Car' },
+  { icon: 'fas fa-tent',               label: 'Tent' },
+  { icon: 'fas fa-clipboard-list',     label: 'Planner' },
+  { icon: 'fas fa-person-walking',     label: 'Dance' },
+  { icon: 'fas fa-envelope-open-text', label: 'Invite' },
+  { icon: 'fas fa-gift',               label: 'Gift' },
+  { icon: 'fas fa-plane-departure',    label: 'Travel' },
+  { icon: 'fas fa-building-columns',   label: 'Venue' },
+  { icon: 'fas fa-seedling',           label: 'Floral' },
+  { icon: 'fas fa-heart',              label: 'Heart' },
+  { icon: 'fas fa-star',               label: 'Star' },
+  { icon: 'fas fa-champagne-glasses',  label: 'Cheers' },
+  { icon: 'fas fa-ring',               label: 'Ring' },
+  { icon: 'fas fa-store',              label: 'Store' },
+  { icon: 'fas fa-leaf',               label: 'Leaf' },
+  { icon: 'fas fa-dollar-sign',        label: 'Dollar' },
+  { icon: 'fas fa-microphone',         label: 'Mic' },
+];
+
+const VENDOR_COLOR_PALETTE = [
+  '#A0C9CB', '#FF6037', '#733635', '#FFBF69',
+  '#CB997E', '#87A878', '#D4A373', '#E8A0BF',
+  '#B4A7D6', '#F0C27F', '#F4845F', '#7FCDCD',
+  '#C4A35A', '#D4A5A5', '#7EB0D5', '#FF9F1C',
+  '#6B8E5D', '#F5F4ED', '#1F1F1F', '#4A4A4A',
+];
+
 function getVendorIcon(category) {
-  return { 
-    decorator: 'fas fa-palette', 
-    photographer: 'fas fa-camera', 
-    caterer: 'fas fa-utensils', 
-    venue: 'fas fa-building',
-    dj: 'fas fa-music',
-    florist: 'fas fa-leaf'
-  }[category?.toLowerCase()] || 'fas fa-store';
+  const key = category?.toLowerCase().replace(/\s+/g, '_');
+  return VENDOR_ICON_MAP[key] || 'fas fa-store';
+}
+
+function getVendorColor(category) {
+  const key = category?.toLowerCase().replace(/\s+/g, '_');
+  return VENDOR_COLOR_MAP[key] || '#A0C9CB';
 }
 
 function formatEventType(type) {
@@ -2003,12 +2165,198 @@ async function loadDashboardV2() {
     if (statVendors) statVendors.textContent = vendorsCount;
     if (statPaid) statPaid.textContent = `$${formatNumber(totalPaid)}`;
     if (statPending) statPending.textContent = `$${formatNumber(totalPending)}`;
-    
+
+    renderBudgetTracker(dashboard.budget_breakdown);
+
     await loadTasksKanban();
     
   } catch (error) {
     console.error('Failed to load dashboard V2:', error);
   }
+}
+
+function renderBudgetTracker(breakdown) {
+  const container = document.getElementById('budgetTracker');
+  if (!container || !breakdown) { if (container) container.style.display = 'none'; return; }
+
+  const spent = parseFloat(breakdown.total_spent || 0);
+  const pending = parseFloat(breakdown.total_pending || 0);
+  const committed = spent + pending;
+
+  if (committed === 0) { container.style.display = 'none'; return; }
+  container.style.display = '';
+
+  const paidPct = committed > 0 ? (spent / committed) * 100 : 0;
+  const pendingPct = committed > 0 ? (pending / committed) * 100 : 0;
+
+  const paidEl = document.getElementById('budgetFillPaid');
+  const pendingEl = document.getElementById('budgetFillPending');
+
+  paidEl.style.transition = 'none';
+  pendingEl.style.transition = 'none';
+  paidEl.style.width = '0%';
+  pendingEl.style.width = '0%';
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      paidEl.style.transition = 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+      pendingEl.style.transition = 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1) 0.15s';
+      paidEl.style.width = `${paidPct}%`;
+      pendingEl.style.width = `${pendingPct}%`;
+    });
+  });
+
+  document.getElementById('budgetLabelSpent').textContent = `$${formatNumber(spent)} PAID`;
+  document.getElementById('budgetLabelRemaining').textContent = `$${formatNumber(pending)} PENDING  ·  $${formatNumber(committed)} TOTAL`;
+}
+
+let _donutAnimatedOnce = false;
+
+function renderSpendDonut(payments, vendors) {
+  const section = document.getElementById('spendDonutSection');
+  if (!section) return;
+
+  const vendorMap = {};
+  vendors.forEach(v => { vendorMap[v.id] = v; });
+
+  const vendorTotals = {};
+  payments.forEach(p => {
+    const amount = parseFloat(p.amount || 0);
+    if (amount <= 0) return;
+    const vid = p.vendor_id;
+    if (!vid) return;
+    vendorTotals[vid] = (vendorTotals[vid] || 0) + amount;
+  });
+
+  const sorted = Object.entries(vendorTotals)
+    .map(([vid, amount]) => {
+      const v = vendorMap[vid];
+      const name = v ? v.name : 'Unknown';
+      const color = v ? (v.icon_color || getVendorColor(v.category)) : '#A0C9CB';
+      return { vid, name, amount, color };
+    })
+    .sort((a, b) => b.amount - a.amount);
+
+  const totalSpend = sorted.reduce((s, e) => s + e.amount, 0);
+
+  if (totalSpend === 0 || sorted.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
+
+  const amountEl = document.getElementById('spendDonutAmount');
+  if (!_donutAnimatedOnce) {
+    let startTime = null;
+    const duration = 900;
+    function countUp(ts) {
+      if (!startTime) startTime = ts;
+      const progress = Math.min((ts - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      amountEl.textContent = `$${formatNumber(Math.round(totalSpend * eased))}`;
+      if (progress < 1) requestAnimationFrame(countUp);
+    }
+    requestAnimationFrame(countUp);
+  } else {
+    amountEl.textContent = `$${formatNumber(totalSpend)}`;
+  }
+
+  const sw = 12;
+  const r = 72;
+  const straight = 234;
+  const halfArc = Math.PI * r;
+  const circumference = 2 * straight + 2 * halfArc;
+  const gapLen = 6;
+  const gapCount = sorted.length > 1 ? sorted.length : 0;
+  const totalGap = gapLen * gapCount;
+  const usable = circumference - totalGap;
+
+  const svgW = straight + 2 * r + sw + 4;
+  const svgH = 2 * r + sw + 4;
+  const svg = document.getElementById('spendDonutSvg');
+  svg.setAttribute('viewBox', `0 0 ${svgW} ${svgH}`);
+
+  const midX = svgW / 2;
+  const midY = svgH / 2;
+  const left = midX - straight / 2;
+  const right = midX + straight / 2;
+  const top_ = midY - r;
+  const bot = midY + r;
+
+  const pillPath = `M ${left} ${top_} L ${right} ${top_} A ${r} ${r} 0 1 1 ${right} ${bot} L ${left} ${bot} A ${r} ${r} 0 1 1 ${left} ${top_}`;
+
+  const slicesEl = document.getElementById('spendDonutSlices');
+  slicesEl.innerHTML = '';
+  let offset = 0;
+
+  const shouldAnimate = !_donutAnimatedOnce;
+
+  sorted.forEach((entry, i) => {
+    const frac = entry.amount / totalSpend;
+    const arcLen = frac * usable;
+    const pct = Math.round(frac * 100);
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    el.setAttribute('d', pillPath);
+    el.setAttribute('fill', 'none');
+    el.setAttribute('stroke', entry.color);
+    el.setAttribute('stroke-width', `${sw}`);
+    el.setAttribute('stroke-linecap', 'butt');
+    el.setAttribute('stroke-dasharray', `${arcLen} ${circumference - arcLen}`);
+    el.setAttribute('stroke-dashoffset', `${-offset}`);
+    el.setAttribute('data-vendor-id', entry.vid);
+    el.style.cursor = 'pointer';
+    el.style.transition = 'stroke-width 0.15s ease';
+
+    el.addEventListener('mouseenter', (e) => {
+      el.setAttribute('stroke-width', `${sw + 4}`);
+      let tip = document.getElementById('donutTooltip');
+      if (!tip) {
+        tip = document.createElement('div');
+        tip.id = 'donutTooltip';
+        tip.className = 'donut-tooltip';
+        document.body.appendChild(tip);
+      }
+      tip.innerHTML = `<strong>${escapeHtml(entry.name)}</strong> — $${formatNumber(entry.amount)} (${pct}%)`;
+      tip.style.display = 'block';
+      tip.style.left = `${e.clientX}px`;
+      tip.style.top = `${e.clientY - 40}px`;
+    });
+    el.addEventListener('mousemove', (e) => {
+      const tip = document.getElementById('donutTooltip');
+      if (tip) {
+        tip.style.left = `${e.clientX}px`;
+        tip.style.top = `${e.clientY - 40}px`;
+      }
+    });
+    el.addEventListener('mouseleave', () => {
+      el.setAttribute('stroke-width', `${sw}`);
+      const tip = document.getElementById('donutTooltip');
+      if (tip) tip.style.display = 'none';
+    });
+
+    if (shouldAnimate) {
+      el.setAttribute('stroke-dasharray', `0 ${circumference}`);
+      el.setAttribute('stroke-dashoffset', '0');
+
+      const targetArc = arcLen;
+      const targetOffset = -offset;
+      const delay = i * 120;
+
+      setTimeout(() => {
+        el.style.transition = 'stroke-dasharray 0.8s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+        el.setAttribute('stroke-dasharray', `${targetArc} ${circumference - targetArc}`);
+        el.setAttribute('stroke-dashoffset', `${targetOffset}`);
+      }, 50 + delay);
+    }
+
+    slicesEl.appendChild(el);
+    offset += arcLen + (i < sorted.length - 1 ? gapLen : 0);
+  });
+
+  _donutAnimatedOnce = true;
+
+  const legendEl = document.getElementById('spendDonutLegend');
+  legendEl.innerHTML = sorted.map((entry, i) => {
+    const pct = Math.round((entry.amount / totalSpend) * 100);
+    return `<div class="spend-legend-item"><span class="spend-legend-dot" style="background:${entry.color}"></span><span class="spend-legend-name">${escapeHtml(entry.name)}</span><span class="spend-legend-values">$${formatNumber(entry.amount)} <span class="spend-legend-pct">${pct}%</span></span></div>`;
+  }).join('');
 }
 
 function renderDashboardSchedule(calendar, subEvents) {
@@ -2074,6 +2422,8 @@ async function loadPaymentsV2() {
     const payments = await paymentsResponse.json();
     const vendors = await vendorsResponse.json();
     const attachments = await attachmentsResponse.json();
+
+    renderSpendDonut(payments, vendors);
 
     const vendorFiles = {};
     const vendorPayments = {};
@@ -2155,7 +2505,8 @@ async function loadPaymentsV2() {
 
 function renderExpandableVendorCard(vendor, index, files, payments) {
   const fileCount = files.length;
-  const avatarColors = ['#A0C9CB', '#FF6037', '#733635', '#F5F4ED'];
+  const iconClass = vendor.icon_class || getVendorIcon(vendor.category);
+  const iconColor = vendor.icon_color || getVendorColor(vendor.category);
 
   const filesHtml = files.length > 0
     ? files.map(f => renderVendorFileCard(f)).join('')
@@ -2185,8 +2536,8 @@ function renderExpandableVendorCard(vendor, index, files, payments) {
   return `
     <div class="vendor-item-v2 expandable" id="vendor-card-${vendor.id}">
       <div class="vendor-card-header" onclick="toggleVendorCard('${vendor.id}')">
-        <div class="vendor-avatar" style="background: ${avatarColors[index % 4]}">
-          ${vendor.name.charAt(0).toUpperCase()}
+        <div class="vendor-avatar" style="background: ${iconColor}" onclick="event.stopPropagation(); openVendorIconPicker('${vendor.id}', '${escapeHtml(vendor.name)}', '${iconClass}', '${iconColor}', '${escapeHtml(vendor.category || '')}')">
+          <i class="${iconClass}"></i>
         </div>
         <div class="vendor-info">
           <div class="vendor-name">${escapeHtml(vendor.name)}</div>
@@ -2340,22 +2691,142 @@ async function saveVendorNotes(vendorId) {
   }
 }
 
+function openVendorIconPicker(vendorId, vendorName, currentIcon, currentColor, category) {
+  let existing = document.getElementById('vendorIconPickerModal');
+  if (existing) existing.remove();
+
+  let selectedIcon = currentIcon;
+  let selectedColor = currentColor;
+
+  const iconGridHtml = VENDOR_ICON_INVENTORY.map(item => {
+    const sel = item.icon === currentIcon ? ' selected' : '';
+    return `<button class="vip-icon-btn${sel}" data-icon="${item.icon}" title="${item.label}"><i class="${item.icon}"></i></button>`;
+  }).join('');
+
+  const colorGridHtml = VENDOR_COLOR_PALETTE.map(c => {
+    const sel = c.toLowerCase() === currentColor.toLowerCase() ? ' selected' : '';
+    return `<button class="vip-color-btn${sel}" data-color="${c}" style="background:${c}"></button>`;
+  }).join('');
+
+  const modal = document.createElement('div');
+  modal.id = 'vendorIconPickerModal';
+  modal.className = 'vip-overlay';
+  modal.innerHTML = `
+    <div class="vip-panel">
+      <div class="vip-header">
+        <h3 class="vip-title">Customize Icon</h3>
+        <button class="vip-close" onclick="closeVendorIconPicker()"><i class="fas fa-times"></i></button>
+      </div>
+
+      <div class="vip-preview">
+        <div class="vip-preview-avatar" id="vipPreviewAvatar" style="background:${currentColor}">
+          <i class="${currentIcon}" id="vipPreviewIcon"></i>
+        </div>
+        <div class="vip-preview-name">${vendorName}</div>
+      </div>
+
+      <div class="vip-section">
+        <div class="vip-section-label">Icon</div>
+        <div class="vip-icon-grid" id="vipIconGrid">${iconGridHtml}</div>
+      </div>
+
+      <div class="vip-section">
+        <div class="vip-section-label">Background Color</div>
+        <div class="vip-color-grid" id="vipColorGrid">${colorGridHtml}</div>
+      </div>
+
+      <div class="vip-actions">
+        <button class="btn btn-ghost" onclick="closeVendorIconPicker()">Cancel</button>
+        <button class="btn btn-primary" id="vipSaveBtn">Save</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  requestAnimationFrame(() => modal.classList.add('show'));
+
+  modal.querySelector('#vipIconGrid').addEventListener('click', (e) => {
+    const btn = e.target.closest('.vip-icon-btn');
+    if (!btn) return;
+    modal.querySelectorAll('.vip-icon-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    selectedIcon = btn.dataset.icon;
+    const preview = document.getElementById('vipPreviewIcon');
+    preview.className = selectedIcon;
+  });
+
+  modal.querySelector('#vipColorGrid').addEventListener('click', (e) => {
+    const btn = e.target.closest('.vip-color-btn');
+    if (!btn) return;
+    modal.querySelectorAll('.vip-color-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    selectedColor = btn.dataset.color;
+    document.getElementById('vipPreviewAvatar').style.background = selectedColor;
+  });
+
+  modal.querySelector('#vipSaveBtn').addEventListener('click', async () => {
+    if (!currentEventId) return;
+    try {
+      await fetch(`${API_BASE}/api/events/${currentEventId}/vendors/${vendorId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ icon_class: selectedIcon, icon_color: selectedColor }),
+      });
+      const avatarEl = document.querySelector(`#vendor-card-${vendorId} .vendor-avatar`);
+      if (avatarEl) {
+        avatarEl.style.background = selectedColor;
+        avatarEl.innerHTML = `<i class="${selectedIcon}"></i>`;
+        avatarEl.setAttribute('onclick',
+          `event.stopPropagation(); openVendorIconPicker('${vendorId}', '${vendorName.replace(/'/g, "\\'")}', '${selectedIcon}', '${selectedColor}', '${category.replace(/'/g, "\\'")}')`
+        );
+      }
+      const donutSlice = document.querySelector(`#spendDonutSlices path[data-vendor-id="${vendorId}"]`);
+      if (donutSlice) {
+        donutSlice.setAttribute('stroke', selectedColor);
+      }
+      const legendDots = document.querySelectorAll('#spendDonutLegend .spend-legend-item');
+      legendDots.forEach(item => {
+        const nameEl = item.querySelector('.spend-legend-name');
+        if (nameEl && nameEl.textContent === vendorName) {
+          const dot = item.querySelector('.spend-legend-dot');
+          if (dot) dot.style.background = selectedColor;
+        }
+      });
+      closeVendorIconPicker();
+    } catch (err) {
+      console.error('Failed to save vendor icon:', err);
+    }
+  });
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeVendorIconPicker();
+  });
+}
+
+function closeVendorIconPicker() {
+  const modal = document.getElementById('vendorIconPickerModal');
+  if (!modal) return;
+  modal.classList.remove('show');
+  setTimeout(() => modal.remove(), 200);
+}
+
 function previewFile(attachmentId, ext, filename) {
   if (!currentEventId) return;
-  const url = `${API_BASE}/api/events/${currentEventId}/attachments/${attachmentId}/download`;
+  const baseUrl = `${API_BASE}/api/events/${currentEventId}/attachments/${attachmentId}/download`;
+  const inlineUrl = `${baseUrl}?inline=true`;
   const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
 
   if (isImage) {
     const lightbox = document.getElementById('imageLightbox');
     const img = document.getElementById('lightboxImage');
-    img.src = url;
+    img.src = inlineUrl;
     lightbox.classList.add('show');
   } else {
     const modal = document.getElementById('filePreviewModal');
     const frame = document.getElementById('filePreviewFrame');
     const title = document.getElementById('filePreviewTitle');
     title.textContent = filename || 'Document Preview';
-    frame.src = url;
+    frame.src = inlineUrl;
     modal.classList.add('show');
   }
 }
@@ -2724,134 +3195,781 @@ async function updateTaskStatus(taskId, newStatus) {
   }
 }
 
+// ============================================
+// FULL CALENDAR GRID
+// ============================================
+
+let calViewYear = null;
+let calViewMonth = null;    // 0-indexed
+let calWeddingDate = null;  // Date object of event start_date
+let calGridData = { calendar_events: [], tasks: [] };
+let editingCalEventId = null;
+let _calAnimatedOnce = false;
+
+function initCalendarGrid() {
+  const prevBtn = document.getElementById('calPrevMonth');
+  const nextBtn = document.getElementById('calNextMonth');
+  const todayBtn = document.getElementById('calTodayBtn');
+  if (prevBtn) prevBtn.addEventListener('click', () => calNavigate(-1));
+  if (nextBtn) nextBtn.addEventListener('click', () => calNavigate(1));
+  if (todayBtn) todayBtn.addEventListener('click', calGoToday);
+  const weddingBtn = document.getElementById('calWeddingBtn');
+  if (weddingBtn) weddingBtn.addEventListener('click', calGoWedding);
+
+  const allDayCheckbox = document.getElementById('calEvtAllDay');
+  if (allDayCheckbox) {
+    allDayCheckbox.addEventListener('change', () => {
+      document.getElementById('calEvtTime').disabled = allDayCheckbox.checked;
+      if (allDayCheckbox.checked) document.getElementById('calEvtTime').value = '';
+    });
+  }
+}
+
+initCalendarGrid();
+
 async function loadCalendarV2() {
   if (!currentEventId) return;
-  
+
   try {
-    const [eventResponse, calendarResponse] = await Promise.all([
-      fetch(`${API_BASE}/api/events/${currentEventId}`),
-      fetch(`${API_BASE}/api/events/${currentEventId}/calendar`)
-    ]);
-    
+    const eventResponse = await fetch(`${API_BASE}/api/events/${currentEventId}`);
     const event = await eventResponse.json();
-    const calendar = await calendarResponse.json();
-    
-    // Update event details card
-    const nameEl = document.getElementById('eventDetailsName');
-    const dateEl = document.getElementById('eventDetailsDate');
-    const locationEl = document.getElementById('eventDetailsLocation');
-    
-    if (nameEl) nameEl.textContent = event.name;
-    if (dateEl) dateEl.innerHTML = `<i class="fas fa-calendar"></i> ${formatDateRange(event.start_date, event.end_date)}`;
-    if (locationEl) locationEl.innerHTML = `<i class="fas fa-map-marker-alt"></i> ${escapeHtml(event.location || 'Location TBD')}`;
-    
-    // Render sub-events
-    const subEventsContainer = document.getElementById('calendarSubEventsList');
-    if (subEventsContainer) {
-      const subEvents = event.sub_events || [];
-      if (subEvents.length === 0) {
-        subEventsContainer.innerHTML = '<div class="empty-state-v2"><p>No sub-events yet</p></div>';
-      } else {
-        subEventsContainer.innerHTML = subEvents.map(se => `
-          <div class="subevent-item-v2">
-            <div class="subevent-name">${escapeHtml(se.name)}</div>
-            <div class="subevent-meta">
-              ${se.date ? `<span><i class="fas fa-calendar"></i> ${formatShortDate(new Date(se.date))}</span>` : ''}
-              ${se.start_time ? `<span><i class="fas fa-clock"></i> ${se.start_time}</span>` : ''}
-              ${se.location ? `<span><i class="fas fa-map-marker-alt"></i> ${escapeHtml(se.location)}</span>` : ''}
-            </div>
-          </div>
-        `).join('');
-      }
+
+    if (event.start_date) {
+      calWeddingDate = parseDateLocal(event.start_date);
+    } else if (event.event_date) {
+      calWeddingDate = parseDateLocal(event.event_date);
+    } else {
+      calWeddingDate = null;
     }
-    
-    // Render calendar events
-    const calendarContainer = document.getElementById('calendarList');
-    if (calendarContainer) {
-      if (calendar.length === 0) {
-        calendarContainer.innerHTML = '<div class="empty-state-v2"><p>No calendar events yet</p></div>';
-      } else {
-        // Sort by date
-        const sortedCalendar = [...calendar].sort((a, b) => parseDateLocal(a.event_date) - parseDateLocal(b.event_date));
-        
-        calendarContainer.innerHTML = sortedCalendar.map(c => {
-          const evDate = parseDateLocal(c.event_date);
-          const day = evDate.getDate();
-          const month = evDate.toLocaleDateString('en-US', { month: 'short' });
-          const calJson = escapeHtml(JSON.stringify(c));
-          
-          return `
-            <div class="calendar-item-v2 clickable" onclick="showCalendarEventDetail(this)" data-cal='${calJson}'>
-              <div class="calendar-date-badge">
-                <span class="calendar-date-day">${day}</span>
-                <span class="calendar-date-month">${month}</span>
-              </div>
-              <div class="calendar-event-info">
-                <div class="calendar-event-title">${escapeHtml(c.title)}</div>
-                <div class="calendar-event-time">${c.event_time || ''} ${c.location ? '· ' + escapeHtml(c.location) : ''}</div>
-              </div>
-            </div>
-          `;
-        }).join('');
-      }
+
+    const weddingBtn = document.getElementById('calWeddingBtn');
+    if (weddingBtn) {
+      weddingBtn.style.display = calWeddingDate ? '' : 'none';
     }
-    
+
+    if (calViewYear === null) {
+      const now = new Date();
+      calViewYear = now.getFullYear();
+      calViewMonth = now.getMonth();
+    }
+
+    await fetchAndRenderCalGrid();
   } catch (error) {
     console.error('Failed to load calendar V2:', error);
   }
 }
 
-// ============================================
-// CALENDAR EVENT DETAIL POPUP
-// ============================================
-
-let activeCalendarEventId = null;
-let activeCalendarNotesOriginal = '';
-
-function showCalendarEventDetail(el) {
-  const calData = JSON.parse(el.dataset.cal);
-  activeCalendarEventId = calData.id;
-  
-  const modal = document.getElementById('calendarDetailModal');
-  if (!modal) return;
-  
-  document.getElementById('calDetailTitle').textContent = calData.title || 'Event';
-  document.getElementById('calDetailDate').textContent = calData.event_date
-    ? formatShortDate(parseDateLocal(calData.event_date))
-    : '';
-  document.getElementById('calDetailTime').textContent = calData.event_time || 'All day';
-  document.getElementById('calDetailLocation').textContent = calData.location || 'No location';
-  
-  const notesEl = document.getElementById('calDetailNotes');
-  notesEl.innerHTML = calData.notes || '';
-  activeCalendarNotesOriginal = calData.notes || '';
-  
-  modal.classList.add('active');
+function calNavigate(delta) {
+  calViewMonth += delta;
+  if (calViewMonth > 11) { calViewMonth = 0; calViewYear++; }
+  if (calViewMonth < 0) { calViewMonth = 11; calViewYear--; }
+  fetchAndRenderCalGrid();
 }
 
-async function closeCalendarDetail() {
-  const modal = document.getElementById('calendarDetailModal');
-  if (!modal) return;
-  
-  const notesEl = document.getElementById('calDetailNotes');
-  const newNotes = notesEl.innerHTML.trim();
-  
-  if (activeCalendarEventId && newNotes !== activeCalendarNotesOriginal) {
-    try {
-      await fetch(`${API_BASE}/api/events/${currentEventId}/calendar/${activeCalendarEventId}`, {
+function calGoToday() {
+  const now = new Date();
+  calViewYear = now.getFullYear();
+  calViewMonth = now.getMonth();
+  fetchAndRenderCalGrid();
+}
+
+function calGoWedding() {
+  if (!calWeddingDate) return;
+  calViewYear = calWeddingDate.getFullYear();
+  calViewMonth = calWeddingDate.getMonth();
+  fetchAndRenderCalGrid();
+}
+
+async function fetchAndRenderCalGrid() {
+  const firstDay = new Date(calViewYear, calViewMonth, 1);
+  const startDow = firstDay.getDay();
+  const gridStart = new Date(calViewYear, calViewMonth, 1 - startDow);
+  const lastDay = new Date(calViewYear, calViewMonth + 1, 0);
+  const endDow = lastDay.getDay();
+  const gridEnd = new Date(calViewYear, calViewMonth + 1, 6 - endDow);
+
+  const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const titleEl = document.getElementById('calMonthTitle');
+  if (titleEl) {
+    titleEl.textContent = firstDay.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+
+  try {
+    const resp = await fetch(
+      `${API_BASE}/api/events/${currentEventId}/calendar/grid?start=${fmt(gridStart)}&end=${fmt(gridEnd)}`
+    );
+    calGridData = await resp.json();
+  } catch (err) {
+    console.error('Failed to fetch calendar grid data:', err);
+    calGridData = { calendar_events: [], tasks: [], payments: [] };
+  }
+
+  renderCalGrid(gridStart, gridEnd);
+}
+
+function renderCalGrid(gridStart, gridEnd) {
+  const grid = document.getElementById('calGrid');
+  if (!grid) return;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const weddingKey = calWeddingDate
+    ? `${calWeddingDate.getFullYear()}-${calWeddingDate.getMonth()}-${calWeddingDate.getDate()}`
+    : null;
+
+  const eventsByDate = {};
+  const tasksByDate = {};
+  const paymentsByDate = {};
+
+  (calGridData.calendar_events || []).forEach(ce => {
+    const start = parseDateLocal(ce.event_date);
+    const end = ce.end_date ? parseDateLocal(ce.end_date) : start;
+    const d = new Date(start);
+    while (d <= end) {
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      if (!eventsByDate[key]) eventsByDate[key] = [];
+      const isStart = d.getTime() === start.getTime();
+      const isEnd = d.getTime() === end.getTime();
+      const isMulti = start.getTime() !== end.getTime();
+      eventsByDate[key].push({ ...ce, _isStart: isStart, _isEnd: isEnd, _isMulti: isMulti });
+      d.setDate(d.getDate() + 1);
+    }
+  });
+
+  (calGridData.tasks || []).forEach(t => {
+    if (!t.due_date) return;
+    const d = parseDateLocal(t.due_date);
+    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    if (!tasksByDate[key]) tasksByDate[key] = [];
+    tasksByDate[key].push(t);
+  });
+
+  (calGridData.payments || []).forEach(p => {
+    if (!p.paid_date) return;
+    const d = parseDateLocal(p.paid_date);
+    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    if (!paymentsByDate[key]) paymentsByDate[key] = [];
+    paymentsByDate[key].push(p);
+  });
+
+  const cells = [];
+  const cursor = new Date(gridStart);
+  const maxItems = 3;
+
+  while (cursor <= gridEnd) {
+    const dateKey = `${cursor.getFullYear()}-${cursor.getMonth()}-${cursor.getDate()}`;
+    const isOutside = cursor.getMonth() !== calViewMonth;
+    const isToday = cursor.getTime() === today.getTime();
+    const isWedding = weddingKey && dateKey === weddingKey;
+    const dateStr = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+
+    let classes = 'cal-cell';
+    if (isOutside) classes += ' outside-month';
+    if (isToday) classes += ' is-today';
+    if (isWedding) classes += ' is-wedding-day';
+
+    const evts = eventsByDate[dateKey] || [];
+    const tsks = tasksByDate[dateKey] || [];
+    const pmts = paymentsByDate[dateKey] || [];
+    const allItems = [];
+
+    evts.forEach(ce => {
+      let posClass = 'cal-item-event';
+      if (ce._isMulti) {
+        if (ce._isStart) posClass += ' multi-start';
+        else if (ce._isEnd) posClass += ' multi-end';
+        else posClass += ' multi-mid';
+      }
+      const label = ce._isStart ? escapeHtml(ce.title) : (ce._isMulti && !ce._isStart ? '' : escapeHtml(ce.title));
+      const ceJson = escapeHtml(JSON.stringify(ce));
+      allItems.push(
+        `<div class="cal-item ${posClass}" onclick="event.stopPropagation(); openCalEventForEdit('${ce.id}')" title="${escapeHtml(ce.title)}">${label || '&nbsp;'}</div>`
+      );
+    });
+
+    tsks.forEach(t => {
+      let tClass = 'cal-item cal-item-task';
+      if (t.status === 'completed') tClass += ' task-completed';
+      if (t.priority === 'high') tClass += ' task-high';
+      allItems.push(
+        `<div class="${tClass}" title="${escapeHtml(t.title)}"><i class="fas fa-check-circle" style="font-size:0.6rem;margin-right:2px;"></i>${escapeHtml(t.title)}</div>`
+      );
+    });
+
+    pmts.forEach(p => {
+      const label = p.vendor_name ? `$${Number(p.amount).toLocaleString()} – ${escapeHtml(p.vendor_name)}` : `$${Number(p.amount).toLocaleString()}`;
+      allItems.push(
+        `<div class="cal-item cal-item-payment" onclick="event.stopPropagation(); openCalPaymentForEdit('${p.id}')" title="${escapeHtml(label)}"><i class="fas fa-dollar-sign" style="font-size:0.6rem;margin-right:2px;"></i>${label}</div>`
+      );
+    });
+
+    let itemsHtml = '';
+    const visible = allItems.slice(0, maxItems);
+    const overflow = allItems.length - maxItems;
+    itemsHtml = visible.join('');
+    if (overflow > 0) {
+      itemsHtml += `<div class="cal-more">+${overflow} more</div>`;
+    }
+
+    cells.push(
+      `<div class="${classes}" data-date="${dateStr}" onclick="onCalCellClick('${dateStr}')">
+        <div class="cal-day-number">${cursor.getDate()}</div>
+        <div class="cal-cell-items">${itemsHtml}</div>
+      </div>`
+    );
+
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  grid.innerHTML = cells.join('');
+
+  if (!_calAnimatedOnce) {
+    const allCells = grid.querySelectorAll('.cal-cell');
+    allCells.forEach((cell, i) => {
+      cell.style.opacity = '0';
+      cell.style.transform = 'translateY(10px)';
+      cell.style.transition = 'none';
+      setTimeout(() => {
+        cell.style.transition = 'opacity 0.35s ease, transform 0.35s ease';
+        cell.style.opacity = '1';
+        cell.style.transform = 'translateY(0)';
+      }, 18 * i);
+    });
+    _calAnimatedOnce = true;
+  }
+}
+
+// --- Calendar Event Modal ---
+
+function onCalCellClick(dateStr) {
+  editingCalEventId = null;
+  const form = document.getElementById('calEventForm');
+  if (form) form.reset();
+
+  document.getElementById('calEventModalTitle').textContent = 'New Event';
+  document.getElementById('calEvtStartDate').value = dateStr;
+  document.getElementById('calEvtEndDate').value = '';
+  document.getElementById('calEvtTitle').value = '';
+  document.getElementById('calEvtNotes').value = '';
+  document.getElementById('calEvtTime').value = '';
+  document.getElementById('calEvtTime').disabled = true;
+  document.getElementById('calEvtAllDay').checked = true;
+  document.getElementById('calEvtDeleteBtn').style.display = 'none';
+
+  document.getElementById('calEventModal').classList.add('show');
+  setTimeout(() => document.getElementById('calEvtTitle').focus(), 100);
+}
+
+function openCalEventForEdit(calEventId) {
+  const ce = (calGridData.calendar_events || []).find(e => e.id === calEventId);
+  if (!ce) return;
+
+  editingCalEventId = calEventId;
+  document.getElementById('calEventModalTitle').textContent = 'Edit Event';
+  document.getElementById('calEvtTitle').value = ce.title || '';
+  document.getElementById('calEvtStartDate').value = ce.event_date || '';
+  document.getElementById('calEvtEndDate').value = ce.end_date || '';
+  document.getElementById('calEvtNotes').value = ce.notes || '';
+
+  const allDay = ce.all_day !== false;
+  document.getElementById('calEvtAllDay').checked = allDay;
+  document.getElementById('calEvtTime').disabled = allDay;
+  document.getElementById('calEvtTime').value = allDay ? '' : (ce.event_time || '');
+
+  document.getElementById('calEvtDeleteBtn').style.display = '';
+  document.getElementById('calEventModal').classList.add('show');
+  setTimeout(() => document.getElementById('calEvtTitle').focus(), 100);
+}
+
+function closeCalEventModal() {
+  document.getElementById('calEventModal').classList.remove('show');
+  editingCalEventId = null;
+}
+
+async function saveCalEvent(e) {
+  e.preventDefault();
+  if (!currentEventId) return;
+
+  const title = document.getElementById('calEvtTitle').value.trim();
+  const startDate = document.getElementById('calEvtStartDate').value;
+  const endDate = document.getElementById('calEvtEndDate').value || null;
+  const allDay = document.getElementById('calEvtAllDay').checked;
+  const timeVal = document.getElementById('calEvtTime').value || null;
+  const notes = document.getElementById('calEvtNotes').value.trim() || null;
+
+  if (!title || !startDate) return;
+
+  const payload = {
+    title,
+    event_date: startDate,
+    end_date: endDate,
+    all_day: allDay,
+    event_time: allDay ? null : timeVal,
+    notes,
+  };
+
+  try {
+    if (editingCalEventId) {
+      await fetch(`${API_BASE}/api/events/${currentEventId}/calendar/${editingCalEventId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes: newNotes })
+        body: JSON.stringify(payload),
       });
-      loadCalendarV2();
-    } catch (err) {
-      console.error('Failed to save calendar notes:', err);
+    } else {
+      await fetch(`${API_BASE}/api/events/${currentEventId}/calendar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
     }
+
+    closeCalEventModal();
+    await fetchAndRenderCalGrid();
+  } catch (err) {
+    console.error('Failed to save calendar event:', err);
   }
-  
-  activeCalendarEventId = null;
-  modal.classList.remove('active');
 }
+
+async function deleteCalEvent() {
+  if (!editingCalEventId || !currentEventId) return;
+
+  try {
+    await fetch(`${API_BASE}/api/events/${currentEventId}/calendar/${editingCalEventId}`, {
+      method: 'DELETE',
+    });
+    closeCalEventModal();
+    await fetchAndRenderCalGrid();
+  } catch (err) {
+    console.error('Failed to delete calendar event:', err);
+  }
+}
+
+// --- Calendar Payment Modal ---
+
+let editingCalPaymentId = null;
+
+function openCalPaymentForEdit(paymentId) {
+  const p = (calGridData.payments || []).find(pm => pm.id === paymentId);
+  if (!p) return;
+
+  editingCalPaymentId = paymentId;
+  document.getElementById('calPaymentModalTitle').textContent = 'Payment Details';
+  document.getElementById('calPmtVendor').value = p.vendor_name || '';
+  document.getElementById('calPmtAmount').value = p.amount || '';
+  document.getElementById('calPmtMethod').value = p.method || '';
+  document.getElementById('calPmtPaidDate').value = p.paid_date || '';
+  document.getElementById('calPmtDueDate').value = p.due_date || '';
+  document.getElementById('calPmtNotes').value = p.notes || '';
+
+  document.getElementById('calPaymentModal').classList.add('show');
+}
+
+function closeCalPaymentModal() {
+  document.getElementById('calPaymentModal').classList.remove('show');
+  editingCalPaymentId = null;
+}
+
+async function saveCalPayment(e) {
+  e.preventDefault();
+  if (!editingCalPaymentId || !currentEventId) return;
+
+  const payload = {
+    amount: parseFloat(document.getElementById('calPmtAmount').value),
+    method: document.getElementById('calPmtMethod').value.trim() || null,
+    paid_date: document.getElementById('calPmtPaidDate').value || null,
+    due_date: document.getElementById('calPmtDueDate').value || null,
+    notes: document.getElementById('calPmtNotes').value.trim() || null,
+  };
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/events/${currentEventId}/payments/${editingCalPaymentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (resp.ok) {
+      closeCalPaymentModal();
+      await fetchAndRenderCalGrid();
+    } else {
+      console.error('Failed to update payment:', resp.status);
+    }
+  } catch (err) {
+    console.error('Failed to save payment:', err);
+  }
+}
+
+// ============================================
+// NOTES VIEW
+// ============================================
+
+let currentNoteId = null;
+let notesList = [];
+let noteSaveTimer = null;
+
+async function loadNotesView() {
+  if (!currentEventId) return;
+
+  const sidebar = document.getElementById('notesSidebar');
+  if (sidebar) sidebar.classList.remove('collapsed');
+  const expandBtn = document.getElementById('notesSidebarExpandBtn');
+  if (expandBtn) expandBtn.style.display = 'none';
+  const icon = document.getElementById('notesSidebarToggleIcon');
+  if (icon) icon.className = 'fas fa-chevron-left';
+
+  await fetchNotesList();
+  renderNotesSidebar();
+
+  if (notesList.length > 0 && !currentNoteId) {
+    await selectNote(notesList[0].id);
+  } else if (currentNoteId) {
+    await selectNote(currentNoteId);
+  } else {
+    showNotesEmptyState(true);
+  }
+}
+
+async function fetchNotesList() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/events/${currentEventId}/notes`);
+    if (resp.ok) {
+      notesList = await resp.json();
+    } else {
+      notesList = [];
+    }
+  } catch (err) {
+    console.error('Failed to fetch notes:', err);
+    notesList = [];
+  }
+}
+
+function renderNotesSidebar() {
+  const listEl = document.getElementById('notesList');
+  if (!listEl) return;
+
+  const query = (document.getElementById('notesSearchInput')?.value || '').toLowerCase().trim();
+  const filtered = query
+    ? notesList.filter(n => (n.title || '').toLowerCase().includes(query) || (n._preview || '').toLowerCase().includes(query))
+    : notesList;
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = query
+      ? '<div class="notes-list-empty">No matching notes</div>'
+      : '<div class="notes-list-empty">No notes yet.<br>Click <b>+ New Note</b> to get started.</div>';
+    return;
+  }
+
+  listEl.innerHTML = filtered.map(n => {
+    const isActive = n.id === currentNoteId;
+    const dt = new Date(n.updated_at);
+    const dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const timeStr = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const preview = escapeHtml(n._preview || '');
+    return `<div class="notes-list-item${isActive ? ' active' : ''}" onclick="selectNote('${n.id}')">
+      <span class="notes-list-item-title">${escapeHtml(n.title || 'Untitled')}</span>
+      ${preview ? `<span class="notes-list-item-preview">${preview}</span>` : ''}
+      <span class="notes-list-item-date">${dateStr}, ${timeStr}</span>
+      <button class="notes-list-delete" onclick="event.stopPropagation(); deleteNoteById('${n.id}')" title="Delete"><i class="fas fa-trash-alt"></i></button>
+    </div>`;
+  }).join('');
+}
+
+function filterNotesList() {
+  renderNotesSidebar();
+}
+
+async function selectNote(noteId) {
+  if (noteSaveTimer) {
+    clearTimeout(noteSaveTimer);
+    noteSaveTimer = null;
+    await saveCurrentNote();
+  }
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/events/${currentEventId}/notes/${noteId}`);
+    if (!resp.ok) {
+      showToast('Note not found', 'error');
+      return;
+    }
+    const note = await resp.json();
+    currentNoteId = note.id;
+
+    document.getElementById('noteTitleInput').value = note.title || '';
+    document.getElementById('notesEditor').innerHTML = note.content || '';
+    updateNoteTimestamp(note.updated_at);
+    updateWordCount();
+    showNotesEmptyState(false);
+
+    const idx = notesList.findIndex(n => n.id === note.id);
+    if (idx !== -1) {
+      notesList[idx]._preview = extractPreview(note.content);
+    }
+    renderNotesSidebar();
+  } catch (err) {
+    console.error('Failed to load note:', err);
+  }
+}
+
+function extractPreview(html) {
+  if (!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const text = tmp.textContent || '';
+  return text.substring(0, 80).trim();
+}
+
+function updateWordCount() {
+  const el = document.getElementById('notesWordCount');
+  if (!el) return;
+  const editor = document.getElementById('notesEditor');
+  if (!editor) return;
+  const text = (editor.textContent || '').trim();
+  const words = text ? text.split(/\s+/).length : 0;
+  el.textContent = `${words} word${words !== 1 ? 's' : ''}`;
+}
+
+function showNotesEmptyState(show) {
+  const editorArea = document.getElementById('notesEditorArea');
+  if (!editorArea) return;
+  if (show) {
+    editorArea.classList.add('no-note');
+    currentNoteId = null;
+  } else {
+    editorArea.classList.remove('no-note');
+  }
+}
+
+function updateNoteTimestamp(isoStr) {
+  const el = document.getElementById('noteUpdatedAt');
+  if (!el || !isoStr) { if (el) el.textContent = ''; return; }
+  const dt = new Date(isoStr);
+  const dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const timeStr = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  el.textContent = `Last updated ${dateStr} ${timeStr}`;
+}
+
+async function createNewNote() {
+  if (!currentEventId) return;
+
+  if (noteSaveTimer) {
+    clearTimeout(noteSaveTimer);
+    noteSaveTimer = null;
+    await saveCurrentNote();
+  }
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/events/${currentEventId}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Untitled Note', content: '' }),
+    });
+    if (resp.ok) {
+      const note = await resp.json();
+      await fetchNotesList();
+      currentNoteId = note.id;
+      document.getElementById('noteTitleInput').value = note.title || '';
+      document.getElementById('notesEditor').innerHTML = note.content || '';
+      updateNoteTimestamp(note.updated_at);
+      updateWordCount();
+      showNotesEmptyState(false);
+      renderNotesSidebar();
+      setTimeout(() => document.getElementById('noteTitleInput').select(), 100);
+    } else {
+      const err = await resp.text();
+      console.error('Failed to create note:', resp.status, err);
+      showToast('Failed to create note', 'error');
+    }
+  } catch (err) {
+    console.error('Failed to create note:', err);
+    showToast('Failed to create note', 'error');
+  }
+}
+
+async function saveCurrentNote() {
+  if (!currentNoteId || !currentEventId) return;
+
+  const title = document.getElementById('noteTitleInput').value.trim() || 'Untitled Note';
+  const content = document.getElementById('notesEditor').innerHTML;
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/events/${currentEventId}/notes/${currentNoteId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, content }),
+    });
+    if (resp.ok) {
+      const note = await resp.json();
+      updateNoteTimestamp(note.updated_at);
+      updateWordCount();
+      const idx = notesList.findIndex(n => n.id === currentNoteId);
+      if (idx !== -1) {
+        notesList[idx].title = note.title;
+        notesList[idx].updated_at = note.updated_at;
+        notesList[idx]._preview = extractPreview(note.content);
+      }
+      renderNotesSidebar();
+      flashSaveStatus();
+    }
+  } catch (err) {
+    console.error('Failed to save note:', err);
+  }
+}
+
+function flashSaveStatus() {
+  const el = document.getElementById('notesSaveStatus');
+  if (!el) return;
+  el.textContent = 'Saved';
+  el.classList.add('visible');
+  setTimeout(() => el.classList.remove('visible'), 1500);
+}
+
+function scheduleNoteSave() {
+  if (noteSaveTimer) clearTimeout(noteSaveTimer);
+  noteSaveTimer = setTimeout(() => {
+    noteSaveTimer = null;
+    saveCurrentNote();
+  }, 1000);
+}
+
+function downloadCurrentNote() {
+  if (!currentNoteId) return;
+  const title = (document.getElementById('noteTitleInput').value.trim() || 'Untitled Note');
+  const editor = document.getElementById('notesEditor');
+  if (!editor) return;
+  const text = editor.innerText || '';
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = title.replace(/[^a-zA-Z0-9_\- ]/g, '').trim() + '.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function deleteCurrentNote() {
+  if (!currentNoteId || !currentEventId) return;
+  await deleteNoteById(currentNoteId);
+}
+
+async function deleteNoteById(noteId) {
+  if (!currentEventId || !noteId) return;
+  if (!confirm('Delete this note?')) return;
+
+  try {
+    await fetch(`${API_BASE}/api/events/${currentEventId}/notes/${noteId}`, {
+      method: 'DELETE',
+    });
+
+    const wasCurrent = noteId === currentNoteId;
+    if (wasCurrent) currentNoteId = null;
+
+    await fetchNotesList();
+    renderNotesSidebar();
+
+    if (wasCurrent) {
+      if (notesList.length > 0) {
+        await selectNote(notesList[0].id);
+      } else {
+        document.getElementById('noteTitleInput').value = '';
+        document.getElementById('notesEditor').innerHTML = '';
+        document.getElementById('noteUpdatedAt').textContent = '';
+        const wc = document.getElementById('notesWordCount');
+        if (wc) wc.textContent = '';
+        showNotesEmptyState(true);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to delete note:', err);
+  }
+}
+
+function toggleNotesSidebar() {
+  const sidebar = document.getElementById('notesSidebar');
+  const expandBtn = document.getElementById('notesSidebarExpandBtn');
+  const icon = document.getElementById('notesSidebarToggleIcon');
+
+  if (!sidebar) return;
+
+  const isCollapsed = sidebar.classList.toggle('collapsed');
+  if (expandBtn) expandBtn.style.display = isCollapsed ? '' : 'none';
+  if (icon) icon.className = isCollapsed ? 'fas fa-chevron-right' : 'fas fa-chevron-left';
+}
+
+function execFmt(command) {
+  document.execCommand(command, false, null);
+  document.getElementById('notesEditor').focus();
+  updateToolbarState();
+}
+
+function applyBlockFormat(tag) {
+  const editor = document.getElementById('notesEditor');
+  if (!editor) return;
+  editor.focus();
+
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+
+  const range = sel.getRangeAt(0);
+  let node = range.startContainer;
+  if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+
+  const block = node.closest('h1, h2, h3, p, div');
+  if (block && editor.contains(block) && block !== editor) {
+    const newEl = document.createElement(tag);
+    newEl.innerHTML = block.innerHTML;
+    block.replaceWith(newEl);
+    const r = document.createRange();
+    r.selectNodeContents(newEl);
+    r.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(r);
+  } else {
+    document.execCommand('formatBlock', false, `<${tag}>`);
+  }
+
+  updateToolbarState();
+  scheduleNoteSave();
+}
+
+function updateToolbarState() {
+  const commands = ['bold', 'italic', 'underline', 'strikethrough', 'insertUnorderedList', 'insertOrderedList'];
+  document.querySelectorAll('.notes-fmt-btn').forEach(btn => {
+    const onclick = btn.getAttribute('onclick') || '';
+    const match = onclick.match(/execFmt\('(\w+)'\)/);
+    if (match) {
+      const cmd = match[1];
+      btn.classList.toggle('active', document.queryCommandState(cmd));
+    }
+  });
+
+  const block = document.queryCommandValue('formatBlock');
+  const sel = document.getElementById('notesBlockFormat');
+  if (sel) {
+    if (block === 'h1') sel.value = 'h1';
+    else if (block === 'h2') sel.value = 'h2';
+    else if (block === 'h3') sel.value = 'h3';
+    else sel.value = 'p';
+  }
+}
+
+(function initNotesEditorListeners() {
+  document.addEventListener('DOMContentLoaded', () => {
+    const editor = document.getElementById('notesEditor');
+    const titleInput = document.getElementById('noteTitleInput');
+
+    if (editor) {
+      editor.addEventListener('input', () => { scheduleNoteSave(); updateWordCount(); });
+      editor.addEventListener('keyup', updateToolbarState);
+      editor.addEventListener('mouseup', updateToolbarState);
+    }
+
+    if (titleInput) {
+      titleInput.addEventListener('input', scheduleNoteSave);
+    }
+  });
+})();
 
 // ============================================
 // FILES VIEW
@@ -2939,7 +4057,14 @@ async function uploadSingleFile(file, metadata = {}) {
     throw new Error(err.detail || 'Upload failed');
   }
 
-  return await response.json();
+  const result = await response.json();
+
+  const ext = file.name?.split('.').pop()?.toLowerCase() || '';
+  if (ext === 'pdf') {
+    setTimeout(() => pollIndexingStatus(result.id), 500);
+  }
+
+  return result;
 }
 
 async function loadFilesV2() {
@@ -3006,6 +4131,8 @@ function renderFileCard(file, vendors) {
   const date = formatShortDate(new Date(file.created_at));
   const category = file.category || 'other';
   const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1);
+  const ext = file.original_filename?.split('.').pop()?.toLowerCase() || '';
+  const isPdf = ext === 'pdf';
 
   const vendorOptions = vendors.map(v =>
     `<option value="${v.id}" ${file.vendor_id === v.id ? 'selected' : ''}>${escapeHtml(v.name)}</option>`
@@ -3026,6 +4153,7 @@ function renderFileCard(file, vendors) {
           <span class="file-category-tag tag-${category}">${categoryLabel}</span>
           ${file.vendor_name ? `<span class="file-vendor-tag"><i class="fas fa-store"></i> ${escapeHtml(file.vendor_name)}</span>` : ''}
         </div>
+        ${isPdf ? `<div class="indexing-bar-container" id="indexing-bar-${file.id}"></div>` : ''}
       </div>
       <div class="file-card-actions">
         <button class="btn btn-ghost btn-sm" onclick="downloadFile('${file.id}')" title="Download">
@@ -3040,6 +4168,74 @@ function renderFileCard(file, vendors) {
       </div>
     </div>
   `;
+}
+
+const INDEXING_STAGE_LABELS = {
+  pending: 'Queued for indexing…',
+  extracting: 'Extracting text…',
+  chunking: 'Splitting into sections…',
+  embedding: 'Generating embeddings…',
+  done: 'Indexed & searchable',
+  error: 'Indexing failed',
+};
+
+const _activePollers = new Set();
+
+function pollIndexingStatus(attachmentId) {
+  if (_activePollers.has(attachmentId)) return;
+  _activePollers.add(attachmentId);
+
+  const container = document.getElementById(`indexing-bar-${attachmentId}`);
+  if (!container) { _activePollers.delete(attachmentId); return; }
+
+  container.innerHTML = `
+    <div class="indexing-progress">
+      <div class="indexing-progress-track">
+        <div class="indexing-progress-fill" style="width: 0%"></div>
+      </div>
+      <span class="indexing-progress-label">Queued for indexing…</span>
+    </div>`;
+
+  async function tick() {
+    try {
+      const res = await fetch(`${API_BASE}/api/events/${currentEventId}/attachments/${attachmentId}/indexing-status`);
+      const data = await res.json();
+      const el = document.getElementById(`indexing-bar-${attachmentId}`);
+      if (!el) { _activePollers.delete(attachmentId); return; }
+
+      const fill = el.querySelector('.indexing-progress-fill');
+      const label = el.querySelector('.indexing-progress-label');
+      if (!fill || !label) { _activePollers.delete(attachmentId); return; }
+
+      fill.style.width = `${data.percent}%`;
+      label.textContent = INDEXING_STAGE_LABELS[data.stage] || data.stage;
+
+      if (data.stage === 'done') {
+        fill.classList.add('indexing-complete');
+        setTimeout(() => {
+          el.style.transition = 'opacity 0.6s ease, max-height 0.6s ease';
+          el.style.opacity = '0';
+          el.style.maxHeight = '0';
+          setTimeout(() => { el.remove(); }, 600);
+        }, 2000);
+        _activePollers.delete(attachmentId);
+        return;
+      }
+
+      if (data.stage === 'error') {
+        fill.classList.add('indexing-error');
+        label.textContent = `Indexing failed: ${data.error || 'unknown'}`;
+        _activePollers.delete(attachmentId);
+        return;
+      }
+
+      setTimeout(tick, 800);
+    } catch {
+      _activePollers.delete(attachmentId);
+    }
+  }
+
+  tick();
 }
 
 function getFileIcon(contentType, filename) {
@@ -3088,7 +4284,13 @@ function toggleFileSortOrder() {
 
 function downloadFile(attachmentId) {
   if (!currentEventId) return;
-  window.open(`${API_BASE}/api/events/${currentEventId}/attachments/${attachmentId}/download`, '_blank');
+  const url = `${API_BASE}/api/events/${currentEventId}/attachments/${attachmentId}/download`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 async function deleteFile(attachmentId) {

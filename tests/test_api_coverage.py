@@ -1041,3 +1041,125 @@ class TestMultiplePaymentItems:
         methods = {p.method for p in paid}
         assert "credit_card" in methods
         assert "bank_ach" in methods
+
+
+# =============================================================================
+# BUDGET TRACKER
+# =============================================================================
+
+@pytest.mark.fast
+class TestBudgetTracker:
+    """Test budget breakdown in dashboard response."""
+
+    @pytest.mark.asyncio
+    async def test_dashboard_includes_budget_breakdown(self, client: AsyncClient, test_db: AsyncSession):
+        event = await _make_event(test_db)
+        vendor = await _make_vendor(test_db, event.id, "Fancy Venue", "venue")
+        p = Payment(event_id=event.id, vendor_id=vendor.id, amount=Decimal("10000"),
+                    paid_date=date(2025, 9, 1))
+        test_db.add(p)
+        await test_db.commit()
+
+        resp = await client.get(f"/api/events/{event.id}/dashboard")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert "budget_breakdown" in data
+        bb = data["budget_breakdown"]
+        assert float(bb["total_spent"]) == 10000.0
+        assert float(bb["total_pending"]) == 0.0
+        assert float(bb["total_committed"]) == 10000.0
+        assert bb["budget_cap"] is None
+        assert bb["remaining"] is None
+        assert bb["percent_used"] is None
+
+    @pytest.mark.asyncio
+    async def test_budget_breakdown_by_category(self, client: AsyncClient, test_db: AsyncSession):
+        event = await _make_event(test_db)
+        venue = await _make_vendor(test_db, event.id, "Grand Hall", "venue")
+        decor = await _make_vendor(test_db, event.id, "Pretty Decor", "decor")
+
+        test_db.add(Payment(event_id=event.id, vendor_id=venue.id, amount=Decimal("20000"),
+                            paid_date=date(2025, 9, 1)))
+        test_db.add(Payment(event_id=event.id, vendor_id=venue.id, amount=Decimal("10000"),
+                            due_date=date(2026, 5, 1)))
+        test_db.add(Payment(event_id=event.id, vendor_id=decor.id, amount=Decimal("5000"),
+                            paid_date=date(2025, 10, 1)))
+        await test_db.commit()
+
+        resp = await client.get(f"/api/events/{event.id}/dashboard")
+        bb = resp.json()["budget_breakdown"]
+        cats = {c["category"]: c for c in bb["by_category"]}
+
+        assert "venue" in cats
+        assert "decor" in cats
+        assert float(cats["venue"]["paid"]) == 20000.0
+        assert float(cats["venue"]["pending"]) == 10000.0
+        assert float(cats["venue"]["total"]) == 30000.0
+        assert float(cats["decor"]["paid"]) == 5000.0
+        assert float(cats["decor"]["total"]) == 5000.0
+
+    @pytest.mark.asyncio
+    async def test_budget_cap_with_remaining(self, client: AsyncClient, test_db: AsyncSession):
+        event = Event(name="Budget Wedding", event_date=date(2026, 10, 1),
+                      budget_cap=Decimal("50000"))
+        test_db.add(event)
+        await test_db.commit()
+        await test_db.refresh(event)
+
+        vendor = await _make_vendor(test_db, event.id, "Top Venue", "venue")
+        test_db.add(Payment(event_id=event.id, vendor_id=vendor.id, amount=Decimal("15000"),
+                            paid_date=date(2025, 9, 1)))
+        test_db.add(Payment(event_id=event.id, vendor_id=vendor.id, amount=Decimal("10000"),
+                            due_date=date(2026, 5, 1)))
+        await test_db.commit()
+
+        resp = await client.get(f"/api/events/{event.id}/dashboard")
+        bb = resp.json()["budget_breakdown"]
+
+        assert float(bb["budget_cap"]) == 50000.0
+        assert float(bb["total_committed"]) == 25000.0
+        assert float(bb["remaining"]) == 25000.0
+        assert bb["percent_used"] == 50.0
+
+    @pytest.mark.asyncio
+    async def test_budget_cap_over_budget(self, client: AsyncClient, test_db: AsyncSession):
+        event = Event(name="Over Budget Wedding", event_date=date(2026, 10, 1),
+                      budget_cap=Decimal("20000"))
+        test_db.add(event)
+        await test_db.commit()
+        await test_db.refresh(event)
+
+        vendor = await _make_vendor(test_db, event.id, "Pricey Venue", "venue")
+        test_db.add(Payment(event_id=event.id, vendor_id=vendor.id, amount=Decimal("25000"),
+                            paid_date=date(2025, 9, 1)))
+        await test_db.commit()
+
+        resp = await client.get(f"/api/events/{event.id}/dashboard")
+        bb = resp.json()["budget_breakdown"]
+
+        assert float(bb["remaining"]) == -5000.0
+        assert bb["percent_used"] == 125.0
+
+    @pytest.mark.asyncio
+    async def test_set_budget_cap_via_event_update(self, client: AsyncClient, test_db: AsyncSession):
+        event = await _make_event(test_db)
+
+        resp = await client.put(f"/api/events/{event.id}", json={"budget_cap": 60000})
+        assert resp.status_code == 200
+        updated = resp.json()
+        assert float(updated["budget_cap"]) == 60000.0
+
+        dash = await client.get(f"/api/events/{event.id}/dashboard")
+        bb = dash.json()["budget_breakdown"]
+        assert float(bb["budget_cap"]) == 60000.0
+
+    @pytest.mark.asyncio
+    async def test_empty_budget_breakdown(self, client: AsyncClient, test_db: AsyncSession):
+        event = await _make_event(test_db)
+
+        resp = await client.get(f"/api/events/{event.id}/dashboard")
+        bb = resp.json()["budget_breakdown"]
+        assert float(bb["total_spent"]) == 0.0
+        assert float(bb["total_pending"]) == 0.0
+        assert bb["by_category"] == []
