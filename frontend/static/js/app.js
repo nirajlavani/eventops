@@ -157,6 +157,11 @@ function createCollapsedPrompt(aiAssistant) {
   promptEl.id = 'collapsedChatPrompt';
   promptEl.textContent = COLLAPSED_PROMPTS[0];
   aiAssistant.parentNode.insertBefore(promptEl, aiAssistant);
+
+  const fadeEl = document.createElement('div');
+  fadeEl.className = 'chat-bottom-fade';
+  fadeEl.id = 'chatBottomFade';
+  aiAssistant.parentNode.insertBefore(fadeEl, aiAssistant);
 }
 
 function showCollapsedPrompt() {
@@ -165,6 +170,8 @@ function showCollapsedPrompt() {
     promptEl.style.display = 'block';
     promptEl.style.opacity = '1';
   }
+  const fadeEl = document.getElementById('chatBottomFade');
+  if (fadeEl) fadeEl.style.display = 'block';
 }
 
 function hideCollapsedPrompt() {
@@ -175,6 +182,8 @@ function hideCollapsedPrompt() {
       promptEl.style.display = 'none';
     }, 200);
   }
+  const fadeEl = document.getElementById('chatBottomFade');
+  if (fadeEl) fadeEl.style.display = 'none';
 }
 
 function rotateCollapsedPrompt() {
@@ -615,13 +624,21 @@ async function loadEventsList() {
       return;
     }
     
-    container.innerHTML = events.map((event, i) => renderEventCard(event, i)).join('');
+    const taskCounts = await Promise.all(events.map(async (ev) => {
+      try {
+        const r = await fetch(`${API_BASE}/api/events/${ev.id}/tasks`);
+        const tasks = r.ok ? await r.json() : [];
+        return tasks.filter(t => t.status === 'pending' || t.status === 'in_progress').length;
+      } catch { return 0; }
+    }));
+
+    container.innerHTML = events.map((event, i) => renderEventCard(event, i, taskCounts[i])).join('');
   } catch (error) {
     console.error('Failed to load events:', error);
   }
 }
 
-function renderEventCard(event, index) {
+function renderEventCard(event, index, tasksRemaining = 0) {
   const dateDisplay = event.start_date && event.end_date 
     ? formatDateRange(event.start_date, event.end_date)
     : event.event_date 
@@ -676,7 +693,7 @@ function renderEventCard(event, index) {
             <i class="fas fa-map-marker-alt"></i> ${escapeHtml(locationDisplay)}
           </div>
         </div>
-        ${hasSubEvents ? `<div class="event-card-badge">${event.sub_events.length} sub-event${event.sub_events.length > 1 ? 's' : ''}</div>` : ''}
+        ${tasksRemaining > 0 ? `<div class="event-card-badge"><i class="fas fa-tasks" style="margin-right:4px"></i>${tasksRemaining} task${tasksRemaining !== 1 ? 's' : ''} remaining</div>` : ''}
       </div>
       ${subEventsHtml}
     </div>
@@ -1033,6 +1050,22 @@ async function submitCapture() {
       const html = formatDocumentAnswer(result.assistant_message || '', citations);
       addMessage(html, 'ai', true);
       addToConversationHistory('assistant', result.assistant_message || '');
+      return;
+    }
+
+    // Handle actionable intents that need persisting (task, calendar_event, etc.)
+    const actionableIntents = ['payment', 'task', 'calendar_event', 'vendor', 'sub_event_update', 'event_update'];
+    if (actionableIntents.includes(result.intent) && result.action !== 'delete' && responseMode !== 'clarify') {
+      const msg = result.assistant_message || 'Done!';
+      if (result.follow_up_question) {
+        addMessage(msg + ' ' + result.follow_up_question, 'ai');
+        addToConversationHistory('assistant', msg + ' ' + result.follow_up_question);
+      } else {
+        addMessage(msg, 'ai');
+        addToConversationHistory('assistant', msg);
+      }
+      pendingExtraction = result;
+      await autoConfirmExtraction();
       return;
     }
 
@@ -2175,27 +2208,29 @@ async function loadDashboardV2() {
   if (!currentEventId) return;
   
   try {
-    const [dashResponse, vendorsResponse, eventResponse] = await Promise.all([
+    const [dashResponse, vendorsResponse, eventResponse, tasksResponse] = await Promise.all([
       fetch(`${API_BASE}/api/events/${currentEventId}/dashboard`),
       fetch(`${API_BASE}/api/events/${currentEventId}/vendors`),
-      fetch(`${API_BASE}/api/events/${currentEventId}`)
+      fetch(`${API_BASE}/api/events/${currentEventId}`),
+      fetch(`${API_BASE}/api/events/${currentEventId}/tasks`)
     ]);
     
     const dashboard = await dashResponse.json();
     const vendors = await vendorsResponse.json();
     const event = await eventResponse.json();
+    const allTasks = tasksResponse.ok ? await tasksResponse.json() : [];
     
-    const subeventsCount = event.sub_events?.length || 0;
+    const tasksRemainingCount = allTasks.filter(t => t.status === 'pending' || t.status === 'in_progress').length;
     const vendorsCount = vendors.length;
     const totalPaid = parseFloat(dashboard.financial_summary?.total_paid || 0);
     const totalPending = parseFloat(dashboard.financial_summary?.total_upcoming || 0);
     
-    const statSubevents = document.getElementById('stat-subevents');
+    const statTasksRemaining = document.getElementById('stat-tasks-remaining');
     const statVendors = document.getElementById('stat-vendors');
     const statPaid = document.getElementById('stat-paid');
     const statPending = document.getElementById('stat-pending');
     
-    if (statSubevents) statSubevents.textContent = subeventsCount;
+    if (statTasksRemaining) statTasksRemaining.textContent = tasksRemainingCount;
     if (statVendors) statVendors.textContent = vendorsCount;
     if (statPaid) statPaid.textContent = `$${formatNumber(totalPaid)}`;
     if (statPending) statPending.textContent = `$${formatNumber(totalPending)}`;
@@ -2387,10 +2422,14 @@ function renderSpendDonut(payments, vendors) {
   _donutAnimatedOnce = true;
 
   const legendEl = document.getElementById('spendDonutLegend');
-  legendEl.innerHTML = sorted.map((entry, i) => {
+  const half = Math.ceil(sorted.length / 2);
+  const col1 = sorted.slice(0, half);
+  const col2 = sorted.slice(half);
+  const renderCol = (items) => items.map(entry => {
     const pct = Math.round((entry.amount / totalSpend) * 100);
     return `<div class="spend-legend-item"><span class="spend-legend-dot" style="background:${entry.color}"></span><span class="spend-legend-name">${escapeHtml(entry.name)}</span><span class="spend-legend-values">$${formatNumber(entry.amount)} <span class="spend-legend-pct">${pct}%</span></span></div>`;
   }).join('');
+  legendEl.innerHTML = `<div class="spend-legend-column">${renderCol(col1)}</div><div class="spend-legend-column">${renderCol(col2)}</div>`;
 }
 
 function renderDashboardSchedule(calendar, subEvents) {
@@ -4499,18 +4538,30 @@ function renderOpsHealth(h) {
 
 function renderOpsModel(s) {
   const el = document.getElementById('opsModelBar');
-  const models = s.models_used || {};
-  const entries = Object.entries(models).sort((a, b) => b[1] - a[1]);
-  if (entries.length === 0 && !s.primary_model) { el.innerHTML = ''; return; }
-  if (entries.length === 0) {
+  const tiers = s.model_tiers || [];
+  const counts = s.models_used || {};
+  if (tiers.length === 0 && !s.primary_model) { el.innerHTML = ''; return; }
+
+  if (tiers.length === 0) {
     el.innerHTML = `<span style="color:#a08070">Model</span> <span class="ops-model-badge"><i class="fas fa-microchip"></i> ${s.primary_model}</span>`;
     return;
   }
-  const badges = entries.map(([name, count]) => {
-    const short = name.replace(/^google\//, '').replace(/^openai\//, '');
-    return `<span class="ops-model-badge"><i class="fas fa-microchip"></i> ${short} <span style="opacity:0.6">(${count})</span></span>`;
+
+  const tierColors = { Fast: '#87A878', Balanced: '#FF9F1C', Strong: '#CB997E', Embedding: '#A0C9CB' };
+  const tierIcons = { Fast: 'fa-bolt', Balanced: 'fa-microchip', Strong: 'fa-brain', Embedding: 'fa-vector-square' };
+  const badges = tiers.map(t => {
+    const short = t.model.replace(/^google\//, '').replace(/^openai\//, '');
+    const color = tierColors[t.tier] || '#FF9F1C';
+    const icon = tierIcons[t.tier] || 'fa-microchip';
+    const callCount = counts[t.model] || 0;
+    const countTag = callCount > 0 ? ` <span style="opacity:0.5">(${callCount})</span>` : '';
+    return `<span class="ops-model-badge" style="background:${color}22;color:${color};border:1px solid ${color}33" title="${t.purpose}">
+      <i class="fas ${icon}" style="font-size:0.65rem"></i>
+      <span style="font-weight:600;text-transform:uppercase;font-size:0.55rem;letter-spacing:0.5px;opacity:0.7">${t.tier}</span>
+      ${short}${countTag}
+    </span>`;
   }).join('');
-  el.innerHTML = `<span style="color:#a08070">Models</span> ${badges}`;
+  el.innerHTML = `<span style="color:#a08070">Model Tiers</span> ${badges}`;
 }
 
 function renderOpsStats(s) {

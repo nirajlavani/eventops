@@ -842,6 +842,18 @@ h4 {
   flex: 1;
 }
 
+/* Bottom gradient fade behind collapsed chat */
+.chat-bottom-fade {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 260px;
+  background: linear-gradient(to top, var(--bg-cream) 0%, var(--bg-cream) 45%, rgba(250, 248, 245, 0.85) 65%, rgba(250, 248, 245, 0) 100%);
+  pointer-events: none;
+  z-index: 48;
+}
+
 /* Collapsed Chat Prompt Text */
 .collapsed-chat-prompt {
   position: fixed;
@@ -3197,41 +3209,39 @@ h4 {
 .spend-donut-legend {
   flex: 1;
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(2, max-content);
-  column-gap: 50px;
-  row-gap: 6px;
+  display: flex;
+  gap: 40px;
   align-content: center;
-  justify-content: start;
+}
+.spend-legend-column {
+  display: grid;
+  grid-template-columns: 10px auto auto;
+  column-gap: 8px;
+  row-gap: 6px;
+  align-items: center;
 }
 .spend-legend-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: contents;
+}
+.spend-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.spend-legend-name {
+  white-space: nowrap;
   font-family: var(--font-body);
   font-size: 0.78rem;
   font-weight: 500;
   color: rgba(53, 30, 28, 0.7);
   letter-spacing: 0.01em;
 }
-.spend-legend-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.spend-legend-name {
-  white-space: nowrap;
-  display: inline-block;
-  min-width: 10em;
-}
 .spend-legend-values {
-  margin-left: 6px;
   font-family: var(--font-body);
+  font-size: 0.78rem;
   font-weight: 600;
   color: var(--text-primary, #1F1F1F);
   white-space: nowrap;
-  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 .spend-legend-pct {
@@ -5395,7 +5405,8 @@ h4 {
 .ops-model-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 8px 14px;
   margin-bottom: var(--space-4);
   font-size: 0.78rem;

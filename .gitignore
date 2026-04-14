@@ -65,6 +65,7 @@ logs/
 htmlcov/
 .pytest_cache/
 .tox/
+tests/docs/
 
 # mypy
 .mypy_cache/

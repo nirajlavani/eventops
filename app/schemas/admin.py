@@ -27,9 +27,15 @@ class LatencyByType(BaseModel):
     embedding_ms: Optional[float] = None
 
 
+class ModelTierInfo(BaseModel):
+    tier: str
+    model: str
+    purpose: str
+
 class MetricsSummary(BaseModel):
     primary_model: Optional[str] = None
     models_used: dict[str, int] = {}
+    model_tiers: list[ModelTierInfo] = []
     total_llm_calls: int
     total_tokens: int
     estimated_cost_usd: float

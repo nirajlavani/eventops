@@ -17,6 +17,7 @@ from app.models.attachment import Attachment
 from app.models.vendor import Vendor
 from app.schemas.admin import (
     MetricsSummary,
+    ModelTierInfo,
     LatencyByType,
     DailyMetrics,
     IntentBreakdown,
@@ -124,9 +125,20 @@ async def metrics_summary(
             model_counts[r.model_name] = model_counts.get(r.model_name, 0) + 1
     primary_model = max(model_counts, key=model_counts.get) if model_counts else Settings().llm_model
 
+    cfg = Settings()
+    model_tiers = [
+        ModelTierInfo(tier="Balanced", model=cfg.llm_model, purpose="Extraction & chat"),
+    ]
+    if cfg.llm_model_fast:
+        model_tiers.insert(0, ModelTierInfo(tier="Fast", model=cfg.llm_model_fast, purpose="Intent detection"))
+    if cfg.llm_model_strong:
+        model_tiers.append(ModelTierInfo(tier="Strong", model=cfg.llm_model_strong, purpose="Planning & analysis"))
+    model_tiers.append(ModelTierInfo(tier="Embedding", model="text-embedding-3-small", purpose="Vector embeddings"))
+
     return MetricsSummary(
         primary_model=primary_model,
         models_used=model_counts,
+        model_tiers=model_tiers,
         total_llm_calls=total_calls,
         total_tokens=total_tokens,
         estimated_cost_usd=round(total_tokens / 1000 * COST_PER_1K_TOKENS, 4),

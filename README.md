@@ -2,101 +2,11 @@
 
 An AI-powered event operations platform for managing weddings, conferences, and complex multi-vendor events. Built around a conversational chatbot ("Eve") that extracts structured data from natural language, a RAG pipeline for contract Q&A, and a real-time observability dashboard for monitoring AI performance.
 
+![EventOps Dashboard](docs/images/dashboard-screenshot.png)
+
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Frontend (SPA)                                │
-│   Vanilla JS · Glassmorphism UI · Chat Interface · Dashboard · AI Ops      │
-└──────────────┬────────────────────────────────────────┬─────────────────────┘
-               │  REST API + SSE Streaming              │  Admin API
-               ▼                                        ▼
-┌──────────────────────────────────┐   ┌──────────────────────────────────────┐
-│         FastAPI Backend          │   │       Admin / Observability          │
-│                                  │   │                                      │
-│  ┌───────────┐  ┌─────────────┐  │   │  /api/admin/metrics/*  (summary,     │
-│  │  Routers  │  │  Services   │  │   │   recent, health)                    │
-│  │           │  │             │  │   │  /api/admin/reindex   (bulk re-index) │
-│  │ • capture │  │ • extract   │  │   └───────────────┬──────────────────────┘
-│  │ • events  │  │ • context   │  │                   │
-│  │ • vendors │  │ • planning  │  │                   │
-│  │ • payments│  │ • metrics   │  │                   │
-│  │ • tasks   │  │             │  │                   │
-│  │ • calendar│  │             │  │                   │
-│  │ • attach  │  │             │  │                   │
-│  │ • notes   │  │             │  │                   │
-│  └─────┬─────┘  └──────┬──────┘  │                   │
-│        │               │         │                   │
-│        ▼               ▼         │                   │
-│  ┌──────────────────────────┐    │                   │
-│  │   LLM Service            │    │                   │
-│  │   (Tiered Model Router)  │    │                   │
-│  └───┬────────┬────────┬────┘    │                   │
-│      │        │        │         │                   │
-└──────┼────────┼────────┼─────────┘                   │
-       │        │        │                             │
-    ┌──▼──┐  ┌──▼──┐  ┌──▼──┐         ┌───────────────▼──────────────┐
-    │FAST │  │ BAL │  │STRNG│         │       RAG Pipeline           │
-    │     │  │     │  │     │         │                              │
-    │route│  │extra│  │ RAG │         │  PDF → PyMuPDF (tables +    │
-    │intent│  │ction│  │synth│         │         text extraction)     │
-    └──┬──┘  └──┬──┘  └──┬──┘         │      → Section chunking      │
-       └────────┴────────┘            │      → Embedding (text-     │
-                │                     │         embedding-3-small)   │
-    ┌───────────▼───────────┐         │      → ChromaDB (cosine)     │
-    │    OpenRouter API     │◄───────►│      → LLM answer gen       │
-    │                       │         └──────────────────────────────┘
-    │  Embeddings:          │
-    │  text-embedding-      │
-    │  3-small              │
-    └───────────────────────┘
-    ┌───────────────────────┐
-    │   SQLite (async)      │
-    │                       │
-    │  Events, Vendors,     │
-    │  Payments, Tasks,     │
-    │  Calendar, Attachments│
-    │  AILog, AIMetric,     │
-    │  SubEvent, Feedback   │
-    └───────────────────────┘
-```
-
-### Data Flow: Natural Language Capture
-
-```
-User: "Paid $500 deposit to Blackberry Ridge"
-  │
-  ▼
-┌─────────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  Context Service     │───►│  LLM Extraction  │───►│  Structured     │
-│  (vendors, payments, │    │  (intent, data,  │    │  Result         │
-│   tasks, docs)       │    │   confidence)    │    │  {intent:       │
-└─────────────────────┘    └──────────────────┘    │   "payment",   │
-                                                    │   data: {...}} │
-                                                    └───────┬─────────┘
-                                                            │
-                                              User confirms │
-                                                            ▼
-                                                    ┌─────────────────┐
-                                                    │  Persist to DB  │
-                                                    │  + Auto-create  │
-                                                    │    vendor/tasks │
-                                                    └─────────────────┘
-```
-
-### Data Flow: Document Q&A (RAG)
-
-```
-User: "How much is the Grah Shanti in the Awaaz contract?"
-  │
-  ▼
-┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│ Intent       │──►│ Embed Query  │──►│ ChromaDB     │──►│ LLM Answer   │
-│ Classification│   │ (text-emb-  │   │ Cosine       │   │ Generation   │
-│ → doc_query  │   │  3-small)    │   │ Search       │   │ with [1][2]  │
-└──────────────┘   └──────────────┘   │ (top-5)      │   │ citations    │
-                                       └──────────────┘   └──────────────┘
-```
+![Architecture Diagram](docs/images/architecture-diagram.png)
 
 ## Features
 
