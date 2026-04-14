@@ -4,6 +4,23 @@ An AI-powered event operations platform for managing weddings, conferences, and 
 
 ![EventOps Dashboard](docs/images/dashboard-screenshot.png)
 
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Data Flow](#data-flow)
+- [Features](#features)
+  - [AI Chatbot ("Eve")](#ai-chatbot-eve)
+  - [RAG Pipeline (Contract Q&A)](#rag-pipeline-contract-qa)
+  - [Payments & Vendors](#payments--vendors)
+  - [Observability Dashboard (AI Ops)](#observability-dashboard-ai-ops)
+  - [Core Event Management](#core-event-management)
+- [Tech Stack](#tech-stack)
+- [Setup](#setup)
+- [Configuration](#configuration)
+  - [Model Routing](#model-routing)
+- [Project Structure](#project-structure)
+- [API Reference](#api-reference)
+
 ## Architecture
 
 ![Architecture Diagram](docs/images/architecture-diagram.png)
@@ -14,16 +31,12 @@ An AI-powered event operations platform for managing weddings, conferences, and 
 
 ## Features
 
-### Core Event Management
-- **Multi-event support** — manage weddings, conferences, and corporate events simultaneously
-- **Vendor tracking** — contacts, categories, notes, and linked payments
-- **Payment management** — deposits, balances, due dates, payment methods, bulk entry
-- **Task board** — priorities, due dates, vendor-linked tasks, drag-and-drop Kanban
-- **Calendar** — schedule tastings, fittings, meetings; monthly grid with event dots
-- **Sub-events** — break complex events into ceremonies, receptions, etc.
-- **File attachments** — upload contracts, invoices, quotes (PDF, images, docs)
-
 ### AI Chatbot ("Eve")
+
+Natural language input is classified into 10 intent types, structured into validated JSON, and persisted to the database — all in a single LLM call.
+
+![Chat Extraction](docs/images/chat-extraction.png)
+
 - **Natural language capture** — enter payments, tasks, vendors, and calendar events in plain English
 - **Intent extraction** — LLM classifies input into 10 intent types with structured data extraction
 - **Context-aware** — references existing vendors, payments, and tasks to avoid duplicates
@@ -32,13 +45,35 @@ An AI-powered event operations platform for managing weddings, conferences, and 
 - **Conversation history** — maintains context across turns for follow-up messages
 
 ### RAG Pipeline (Contract Q&A)
+
+Upload contracts and ask questions in natural language. Answers cite specific pages and quote contract language directly.
+
+![Contract Q&A](docs/images/rag-contract-qa.png)
+
 - **Table-aware PDF extraction** — PyMuPDF `find_tables()` converts tabular data to structured markdown
 - **Section-based chunking** — headings, tables, and text split into semantically coherent chunks
 - **Vector search** — ChromaDB with cosine similarity, per-event collections
 - **Cited answers** — responses include `[1]`, `[2]` source references with page numbers
 - **Vendor-scoped queries** — optionally filter search results by vendor name
 
+### Payments & Vendors
+
+Track every vendor, payment, and balance in one place. Vendor details, file attachments, notes, and payment history are all linked.
+
+![Payments & Vendors](docs/images/payments-vendors.png)
+
+- **Spend donut chart** — animated per-vendor breakdown with multi-column legend
+- **Financial summary cards** — total spend, upcoming payments, overdue amounts
+- **Vendor icons** — customizable emoji icons synced with donut chart colors
+- **Payment history** — chronological log of all payments across vendors
+- **Notes** — rich-text note-taking per event, file-backed storage
+
 ### Observability Dashboard (AI Ops)
+
+Every LLM call is logged with model name, latency, tokens, and confidence. The admin panel surfaces this as real-time metrics.
+
+![AI Ops Panel](docs/images/ai-ops-panel.png)
+
 - **Dark-mode admin panel** — garnet-themed overlay, visually distinct from user UI
 - **Real-time metrics** — total calls, token usage, estimated cost, latency percentiles
 - **Activity charts** — 7-day activity trend and latency trend (SVG)
@@ -46,13 +81,17 @@ An AI-powered event operations platform for managing weddings, conferences, and 
 - **RAG performance** — query count, average retrieval score, chunk statistics
 - **Recent activity log** — timestamped table of all AI operations
 - **Bulk re-index** — one-click re-indexing of all PDFs with latest extraction pipeline
-- **Model display** — shows which LLM model is currently powering the system
+- **Model display** — shows all models in use with per-model call counts
 
-### Dashboard & Visualization
-- **Spend donut chart** — animated per-vendor breakdown with multi-column legend
-- **Financial summary cards** — total spend, upcoming payments, overdue amounts
-- **Vendor icons** — customizable emoji icons synced with donut chart colors
-- **Notes** — rich-text note-taking per event, file-backed storage
+### Core Event Management
+
+- **Multi-event support** — manage weddings, conferences, and corporate events simultaneously
+- **Vendor tracking** — contacts, categories, notes, and linked payments
+- **Payment management** — deposits, balances, due dates, payment methods, bulk entry
+- **Task board** — priorities, due dates, vendor-linked tasks, Kanban columns (To Do, In Progress, Done)
+- **Calendar** — schedule tastings, fittings, meetings; monthly grid with event dots
+- **Sub-events** — break complex events into ceremonies, receptions, etc.
+- **File attachments** — upload contracts, invoices, quotes (PDF, images, docs)
 
 ## Tech Stack
 
@@ -192,8 +231,7 @@ eventops/
 │   ├── conftest.py             # Async test fixtures (httpx + test DB)
 │   ├── test_api_coverage.py    # REST endpoint coverage
 │   ├── test_rag.py             # RAG pipeline tests
-│   ├── test_rag_pipeline.py    # Chunking + extraction tests
-│   └── docs/                   # Sample PDFs for testing
+│   └── test_rag_pipeline.py    # Chunking + extraction tests
 ├── requirements.txt
 ├── .env.example
 ├── pytest.ini
