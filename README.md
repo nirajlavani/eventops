@@ -8,6 +8,10 @@ An AI-powered event operations platform for managing weddings, conferences, and 
 
 ![Architecture Diagram](docs/images/architecture-diagram.png)
 
+## Data Flow
+
+![Data Flow Diagram](docs/images/data-flow-diagram.png)
+
 ## Features
 
 ### Core Event Management
